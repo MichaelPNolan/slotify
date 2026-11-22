@@ -1,0 +1,15 @@
+.gradle/
+build/
+.idea/
+*.iml
+local.properties
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Local secrets / tooling (never commit)
+spotify-app.txt
+.mimocode/
+.kotlin/
+*.log
