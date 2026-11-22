@@ -176,7 +176,7 @@ fun SettingsScreen(state: AppState, pkceAwait: suspend (String) -> String) {
         SectionTitle("Music library (${library.size} indexed)")
         Text(
             text = "Folders scanned for matching. On Android use the same kind of roots " +
-                "as desktop (e.g. /storage/emulated/0/Music) — Slotify’s own folder is " +
+                "as desktop (e.g. /sdcard/Music on Android) — Slotify’s own folder is " +
                 "under Music and is included automatically after you copy files there.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -224,45 +224,92 @@ fun SettingsScreen(state: AppState, pkceAwait: suspend (String) -> String) {
 
         HorizontalDivider()
 
-        // ── Stage playlist files for phone copy ──────────────────────
-        SectionTitle("Slotify folder (phone copy)")
-        Text(
-            text = "Symlink every matched playlist file into the Slotify directory " +
-                "so a folder copy carries only playlist tracks (not the whole Music tree). " +
-                "Copy with “follow symbolic links” (cp -L / rsync -L) so the phone gets real files.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        OutlinedButton(
-            onClick = { state.stagePlaylistFilesAsSymlinks() },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Stage playlist files as links into Slotify")
+        // ── Music folder: export/import playlists (symlink stage = desktop only)
+        SectionTitle("Music folder")
+        if (com.slotify.app.data.supportsSymlinkStaging()) {
+            Text(
+                text = "Symlink every matched playlist file into the Slotify directory " +
+                    "so a folder copy carries only playlist tracks (not the whole Music tree). " +
+                    "Copy with “follow symbolic links” (cp -L / rsync -L) so the phone gets real files.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(
+                onClick = { state.stagePlaylistFilesAsSymlinks() },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Stage playlist files as links into Slotify")
+            }
         }
         Text(
-            text = com.slotify.app.data.defaultSlotifyMusicDir(),
+            text = com.slotify.app.data.portableJsonExportDir(),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Text(
+            text = if (com.slotify.app.data.supportsSymlinkStaging()) {
+                "Playlists live in app data, not the music folder, unless you export them. " +
+                    "Export writes playlists.json + manual_links.json to the Music folder above."
+            } else {
+                "Put playlists.json and manual_links.json in the Music folder above " +
+                    "(not Slotify/), then Import."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = { state.exportPlaylistsToMusicDir() },
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Export playlists")
+            }
+            OutlinedButton(
+                onClick = { state.importPlaylistsFromMusicDir() },
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Import playlists")
+            }
+        }
 
         HorizontalDivider()
 
         // ── JSON import ──────────────────────────────────────────────
         SectionTitle("Import playlist from file")
+        Text(
+            text = "Android: use Pick file (system picker) — raw /sdcard paths often " +
+                "can’t read .json (scoped storage). Desktop: filename or full path.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedButton(
+            onClick = { state.pickAndImportPlaylistJson() },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Default.FileOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Pick file…")
+        }
         OutlinedTextField(
             value = jsonPath,
             onValueChange = { jsonPath = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Path to playlist JSON") },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            label = { Text("Filename or path") },
+            placeholder = { Text("playlists.json") },
             singleLine = true,
             supportingText = {
-                Text("""Schema: {"name":"…","tracks":[{"name":"…","artists":["…"],"durationMs":123000}]}""")
+                Text(
+                    "Music: ${com.slotify.app.data.portableJsonExportDir()} — " +
+                        "or paste content://… from the picker",
+                )
             },
         )
         OutlinedButton(
-            onClick = { state.importFromJsonFile(jsonPath.trim()) },
+            onClick = { state.importPlaylistJsonByName(jsonPath.trim()) },
             enabled = jsonPath.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
         ) {

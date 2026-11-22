@@ -19,18 +19,9 @@ class AndroidLibraryScanner(
 
     override suspend fun scan(roots: List<String>, onProgress: (String) -> Unit): List<LocalTrack> =
         withContext(Dispatchers.IO) {
-            val files = roots.flatMap { root ->
-                val dir = File(root)
-                if (!dir.isDirectory) return@flatMap emptyList()
-                dir.walkTopDown()
-                    .onEnter { it.canRead() }
-                    .filter { it.isFile && it.extension.lowercase() in audioExtensions }
-                    // After a desktop copy, Slotify may still contain links —
-                    // resolve to the real path when possible.
-                    .map { f -> runCatching { f.canonicalFile }.getOrDefault(f) }
-                    .distinctBy { it.absolutePath }
-                    .toList()
-            }
+            // Same normalization as desktop: overlapping roots (/sdcard vs
+            // /storage/emulated/0, Music + Music/Slotify) must not double-count.
+            val files = collectAudioFiles(roots, audioExtensions, skipHidden = false)
             files.mapIndexed { i, file ->
                 if (i % 25 == 0 || i == files.lastIndex) {
                     onProgress("Reading tags (${i + 1}/${files.size}): ${file.name}")

@@ -32,3 +32,24 @@ actual fun pickAudioFile(initialDir: String?): String? {
     }
     return chosen
 }
+
+actual fun pickPlaylistJsonFile(): String? {
+    var chosen: String? = null
+    val runnable = Runnable {
+        val dialog = FileDialog(null as Frame?, "Import playlist JSON", FileDialog.LOAD)
+        dialog.isMultipleMode = false
+        dialog.setFilenameFilter { _, name ->
+            name.endsWith(".json", ignoreCase = true)
+        }
+        dialog.isVisible = true
+        val file = dialog.file ?: return@Runnable
+        val dir = dialog.directory ?: return@Runnable
+        chosen = File(dir, file).absolutePath
+    }
+    if (SwingUtilities.isEventDispatchThread()) {
+        runnable.run()
+    } else {
+        SwingUtilities.invokeAndWait(runnable)
+    }
+    return chosen
+}

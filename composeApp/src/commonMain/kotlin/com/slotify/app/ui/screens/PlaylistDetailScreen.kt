@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -251,45 +250,11 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
         HorizontalDivider()
         Spacer(Modifier.size(4.dp))
 
-        // “To be sourced” — unmatched rows only (Link file / YouTube).
+        // One scrollable list: To be sourced + Matched stacked (phone can scroll all of it).
         val unmatchedAll = playlist.resolvedTracks.withIndex().filter { !it.value.isMatched }
         val unmatchedFiltered = unmatchedAll.filter { matchesFilter(it.value) }
-        if (unmatchedAll.isNotEmpty()) {
-            ToBeSourcedSection(
-                state = state,
-                playlist = playlist,
-                rows = unmatchedFiltered,
-                totalUnmatched = unmatchedAll.size,
-                onFindOnYoutube = { findTarget = it },
-            )
-            Spacer(Modifier.size(8.dp))
-            HorizontalDivider()
-            Spacer(Modifier.size(4.dp))
-        }
-
-        // One-shot gesture hint above the matched list (not on every row).
         val matchedAll = playlist.resolvedTracks.withIndex().filter { it.value.isMatched }
         val matchedFiltered = matchedAll.filter { matchesFilter(it.value) }
-        if (matchedAll.isNotEmpty() || unmatchedAll.isEmpty()) {
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                Text(
-                    text = if (filter.isBlank()) {
-                        "Matched (${matchedAll.size})"
-                    } else {
-                        "Matched (${matchedFiltered.size} of ${matchedAll.size})"
-                    },
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (matchedAll.isNotEmpty() && state.youtube.isSupported) {
-                    Text(
-                        text = "Hold 5s or swipe a row left to re-fetch from YouTube",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
 
         LazyColumn(
             modifier = Modifier
@@ -297,9 +262,76 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
                 .weight(1f),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
         ) {
-            // Keep original playlist indices so Play starts at the right row.
-            items(matchedFiltered, key = { (idx, row) -> "m-${row.remote.id ?: row.remote.name}-$idx" }) {
-                    (index, row) ->
+            // ── To be sourced ────────────────────────────────────────
+            if (unmatchedAll.isNotEmpty()) {
+                item(key = "hdr-unmatched") {
+                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                        Text(
+                            text = if (unmatchedFiltered.size == unmatchedAll.size) {
+                                "To be sourced (${unmatchedAll.size})"
+                            } else {
+                                "To be sourced (${unmatchedFiltered.size} of ${unmatchedAll.size})"
+                            },
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            text = "No local file yet — link a file or fetch from YouTube",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (unmatchedFiltered.isEmpty()) {
+                            Text(
+                                text = "No unmatched rows match your search",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                items(
+                    unmatchedFiltered,
+                    key = { (idx, row) -> "u-${row.remote.id ?: row.remote.name}-$idx" },
+                ) { (_, row) ->
+                    UnmatchedRow(
+                        state = state,
+                        playlistId = playlist.id,
+                        row = row,
+                        onFindOnYoutube = { findTarget = it },
+                    )
+                }
+                item(key = "div-unmatched") {
+                    Spacer(Modifier.size(8.dp))
+                    HorizontalDivider()
+                    Spacer(Modifier.size(4.dp))
+                }
+            }
+
+            // ── Matched ──────────────────────────────────────────────
+            item(key = "hdr-matched") {
+                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                    Text(
+                        text = if (filter.isBlank()) {
+                            "Matched (${matchedAll.size})"
+                        } else {
+                            "Matched (${matchedFiltered.size} of ${matchedAll.size})"
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (matchedAll.isNotEmpty() && state.youtube.isSupported) {
+                        Text(
+                            text = "Hold 5s or swipe a row left to re-fetch from YouTube",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            items(
+                matchedFiltered,
+                key = { (idx, row) -> "m-${row.remote.id ?: row.remote.name}-$idx" },
+            ) { (index, row) ->
                 MatchedRow(
                     state = state,
                     playlistId = playlist.id,
@@ -317,7 +349,7 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
                 )
             }
             if (matchedFiltered.isEmpty() && unmatchedFiltered.isEmpty()) {
-                item {
+                item(key = "empty") {
                     Text(
                         text = if (filter.isNotBlank()) {
                             "No tracks match “$filter”"
@@ -328,54 +360,6 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(vertical = 16.dp),
                     )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ToBeSourcedSection(
-    state: AppState,
-    playlist: com.slotify.app.model.AppPlaylist,
-    rows: List<IndexedValue<ResolvedPlaylistTrack>>,
-    totalUnmatched: Int,
-    onFindOnYoutube: (com.slotify.app.model.RemoteTrack) -> Unit,
-) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            text = if (rows.size == totalUnmatched) {
-                "To be sourced (${rows.size})"
-            } else {
-                "To be sourced (${rows.size} of $totalUnmatched)"
-            },
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-        )
-        Text(
-            text = "No local file yet — link a file or fetch from YouTube",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
-        if (rows.isEmpty()) {
-            Text(
-                text = "No unmatched rows match your search",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 280.dp),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-            ) {
-                items(rows, key = { (idx, row) -> "u-${row.remote.id ?: row.remote.name}-$idx" }) {
-                        (_, row) ->
-                    UnmatchedRow(state = state, playlistId = playlist.id, row = row, onFindOnYoutube = onFindOnYoutube)
                 }
             }
         }

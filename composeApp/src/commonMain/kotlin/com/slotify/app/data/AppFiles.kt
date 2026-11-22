@@ -14,6 +14,12 @@ expect fun readExternalTextOrNull(path: String): String?
 expect fun defaultLibraryRoots(): List<String>
 
 /**
+ * Symlink staging (link playlist audio into Slotify for a desktop→phone copy)
+ * is desktop-only — Android storage typically forbids symlinks.
+ */
+expect fun supportsSymlinkStaging(): Boolean
+
+/**
  * Platform “managed” directory for files Slotify downloads/exports:
  * a subdirectory of the OS music folder (e.g. `~/Music/Slotify`).
  * Movable with the library; not a hashed store — plain named audio files.
@@ -33,6 +39,22 @@ fun slotifyDownloadsDir(root: String = defaultSlotifyMusicDir()): String =
 
 fun slotifyConversionsDir(root: String = defaultSlotifyMusicDir()): String =
     root.trimEnd('/') + "/conversions"
+
+/**
+ * Directories searched for portable JSON (`playlists.json`, `manual_links.json`).
+ * **Only the Music library roots** (e.g. `/sdcard/Music` on Android) — not the
+ * Slotify subdirectory. App-private data is loaded separately via AppFiles.
+ */
+fun portableJsonSearchDirs(): List<String> =
+    defaultLibraryRoots()
+        .map { it.trimEnd('/') }
+        .filter { it.isNotEmpty() }
+        .distinct()
+
+/** Export location for portable JSON: first Music library root. */
+fun portableJsonExportDir(): String =
+    portableJsonSearchDirs().firstOrNull()
+        ?: defaultSlotifyMusicDir().trimEnd('/')
 
 /** True when [path] is inside the managed Slotify root (not staging). */
 fun isUnderSlotifyRoot(path: String, root: String = defaultSlotifyMusicDir()): Boolean {

@@ -1,5 +1,6 @@
 package com.slotify.app.state
 
+import com.slotify.app.data.AppFiles
 import com.slotify.app.data.AppRepository
 import com.slotify.app.data.AppSettings
 import com.slotify.app.data.ManualLinks
@@ -91,13 +92,50 @@ class AppState(
     })
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
 
-    private val _playlists = MutableStateFlow(repository.loadPlaylists())
-    val playlists: StateFlow<List<AppPlaylist>> = _playlists.asStateFlow()
+    /**
+     * App-private playlists, with fallback to `Music/Slotify/playlists.json`
+     * (the portable copy users move to a phone). When music-dir import is
+     * used, we persist into app storage and rematch once the library is ready.
+     */
+    private val playlistsFromMusicDir: Boolean
+    private val _playlists: MutableStateFlow<List<AppPlaylist>>
+    val playlists: StateFlow<List<AppPlaylist>>
+
+    init {
+        val fromApp = repository.loadPlaylists()
+        if (fromApp.isNotEmpty()) {
+            _playlists = MutableStateFlow(fromApp)
+            playlistsFromMusicDir = false
+        } else {
+            val fromMusic = repository.loadPlaylistsFromMusicDir()
+            _playlists = MutableStateFlow(fromMusic ?: emptyList())
+            playlistsFromMusicDir = fromMusic != null && fromMusic.isNotEmpty()
+            if (playlistsFromMusicDir) {
+                // Persist into app data so the next cold start does not depend on Music.
+                runCatching { repository.savePlaylists(_playlists.value) }
+            }
+        }
+        playlists = _playlists.asStateFlow()
+    }
 
     private val _library = MutableStateFlow(repository.loadLibrary())
     val library: StateFlow<List<LocalTrack>> = _library.asStateFlow()
 
-    private val _manualLinks = MutableStateFlow(repository.loadManualLinks())
+    /**
+     * App pins merged with portable pins from `Music/Slotify/manual_links.json`
+     * (paths remapped for this device). Without these, rematch after a phone
+     * import is fuzzy-only and drops high-confidence desktop pins.
+     */
+    private val _manualLinks = MutableStateFlow(
+        repository.loadManualLinks().let { appPins ->
+            val portable = runCatching { repository.loadManualLinksFromMusicDir() }.getOrNull()
+            if (portable == null || portable.byPlaylist.isEmpty()) {
+                appPins
+            } else {
+                appPins.mergedWith(portable)
+            }
+        },
+    )
     /** User-pinned playlist track → file paths (survive rematch). */
     val manualLinks: StateFlow<ManualLinks> = _manualLinks.asStateFlow()
 
@@ -180,6 +218,10 @@ class AppState(
         // so the library is ready without requiring a manual Scan click.
         if (_library.value.isEmpty() && _settings.value.libraryRoots.isNotEmpty()) {
             scanLibrary()
+        } else if (playlistsFromMusicDir && _library.value.isNotEmpty() && _playlists.value.isNotEmpty()) {
+            // Playlists arrived from Music/Slotify — rematch against local files
+            // (desktop paths in the JSON won’t resolve on the phone).
+            scope.launch { rematchAll() }
         }
         // Apply the persisted volume to the fresh player instance.
         player.setVolume(_volume.value)
@@ -664,6 +706,9 @@ class AppState(
             }
             result.onSuccess { playlist ->
                 _playlists.value = mergePlaylists(_playlists.value, listOf(playlist))
+                // Pull portable pins for this id (if exported to Music/Slotify)
+                // before rematch — search import alone is fuzzy-only.
+                mergePortablePinsForPlaylist(playlist.id)
                 repository.savePlaylists(_playlists.value)
                 _importStatus.value =
                     "Imported \"${playlist.name}\" (${playlist.remote.tracks.size} tracks); matching…"
@@ -683,25 +728,187 @@ class AppState(
         }
     }
 
-    /** Import a playlist from a JSON file path (loose schema — see Settings). */
+    /**
+     * Merge pins for [playlistId] from `Music/Slotify/manual_links.json`
+     * (paths remapped for this device) into app pin storage.
+     */
+    private suspend fun mergePortablePinsForPlaylist(playlistId: String) {
+        val portable = withContext(Dispatchers.IO) {
+            runCatching { repository.loadManualLinksFromMusicDir() }.getOrNull()
+        } ?: return
+        val pins = portable.linksFor(playlistId)
+        if (pins.isEmpty()) return
+        var next = _manualLinks.value
+        for ((key, path) in pins) {
+            next = next.put(playlistId, key, path)
+        }
+        _manualLinks.value = next
+        withContext(Dispatchers.IO) { repository.saveManualLinks(next) }
+    }
+
+    /**
+     * Import playlist JSON from a file path or SAF `content://` URI.
+     * Accepts full `List<AppPlaylist>` export and loose single-playlist JSON.
+     */
     fun importFromJsonFile(path: String) {
         scope.launch {
-            val content = com.slotify.app.data.readExternalTextOrNull(path)
+            val content = withContext(Dispatchers.IO) {
+                com.slotify.app.data.readExternalTextOrNull(path)
+            }
             if (content == null) {
-                emit("Cannot read file: $path")
+                emit(
+                    "Cannot read: $path — on Android, non-media files under " +
+                        "/sdcard need the Pick file button (system picker), not a raw path.",
+                )
                 return@launch
             }
-            runCatching { repository.parsePlaylistJson(content) }
-                .onSuccess { playlist ->
-                    _playlists.value = _playlists.value.filterNot { it.id == playlist.id } + playlist
-                    repository.savePlaylists(_playlists.value)
-                    matchPlaylist(playlist.id)
-                    emit("Imported \"${playlist.name}\" (${playlist.remote.tracks.size} tracks)")
-                    openPlaylist(playlist.id)
+            runCatching { repository.parsePlaylistJsonFile(content) }
+                .onSuccess { incoming ->
+                    if (incoming.isEmpty()) {
+                        emit("No playlists found in file")
+                        return@onSuccess
+                    }
+                    _playlists.value = mergePlaylists(_playlists.value, incoming)
+                    withContext(Dispatchers.IO) { repository.savePlaylists(_playlists.value) }
+                    incoming.forEach { matchPlaylist(it.id) }
+                    emit(
+                        if (incoming.size == 1) {
+                            "Imported \"${incoming[0].name}\" " +
+                                "(${incoming[0].remote.tracks.size} tracks)"
+                        } else {
+                            "Imported ${incoming.size} playlists from file"
+                        },
+                    )
+                    if (incoming.size == 1) openPlaylist(incoming[0].id)
                 }
                 .onFailure { e ->
                     emit("Not a valid playlist JSON: ${e.message}")
                 }
+        }
+    }
+
+    /**
+     * System file picker → import. Works on Android (SAF content URI) and
+     * desktop (absolute path). Preferred over typing a /sdcard path.
+     */
+    fun pickAndImportPlaylistJson() {
+        scope.launch {
+            val picked = withContext(Dispatchers.IO) {
+                runCatching { com.slotify.app.platform.pickPlaylistJsonFile() }.getOrNull()
+            }
+            if (picked.isNullOrBlank()) {
+                emit("No file selected")
+                return@launch
+            }
+            importFromJsonFile(picked)
+        }
+    }
+
+    /**
+     * Import a playlist JSON by filename (or absolute path / content URI).
+     * Relative names resolve under the Music root first (e.g. `/sdcard/Music`).
+     */
+    fun importPlaylistJsonByName(fileName: String) {
+        val name = fileName.trim()
+        if (name.isEmpty()) {
+            emit("Enter a JSON filename, full path, or use Pick file")
+            return
+        }
+        if (name.startsWith("content://")) {
+            importFromJsonFile(name)
+            return
+        }
+        val candidates = buildList {
+            if (name.startsWith("/") || name.contains(":\\")) {
+                add(name)
+                // Common Android alias if user typed /storage/emulated/0/…
+                if (name.startsWith("/storage/emulated/0/")) {
+                    add("/sdcard/" + name.removePrefix("/storage/emulated/0/"))
+                }
+                if (name.startsWith("/sdcard/")) {
+                    add("/storage/emulated/0/" + name.removePrefix("/sdcard/"))
+                }
+            } else {
+                com.slotify.app.data.portableJsonSearchDirs().forEach { dir ->
+                    add(dir.trimEnd('/') + "/" + name)
+                }
+                val home = System.getProperty("user.home") ?: ""
+                if (home.isNotBlank()) add(home.trimEnd('/') + "/" + name)
+            }
+        }
+        val diagnostics = candidates.joinToString("\n") { p ->
+            val f = java.io.File(p)
+            val exists = runCatching { f.exists() }.getOrDefault(false)
+            val isFile = runCatching { f.isFile }.getOrDefault(false)
+            val canRead = runCatching { f.canRead() }.getOrDefault(false)
+            "$p (exists=$exists file=$isFile read=$canRead)"
+        }
+        val resolved = candidates.firstOrNull { p ->
+            runCatching { java.io.File(p).isFile && java.io.File(p).canRead() }.getOrDefault(false)
+        }
+        if (resolved == null) {
+            emit(
+                "Cannot open file. Android scoped storage often blocks raw /sdcard paths " +
+                    "for .json — use Pick file instead.\n$diagnostics",
+            )
+            return
+        }
+        importFromJsonFile(resolved)
+    }
+
+    /**
+     * Re-read portable `playlists.json` (Music root first, then Slotify) and
+     * merge into the app — used after copying files to a phone.
+     */
+    fun importPlaylistsFromMusicDir() {
+        scope.launch {
+            val incoming = withContext(Dispatchers.IO) {
+                repository.loadPlaylistsFromMusicDir()
+            }
+            if (incoming.isNullOrEmpty()) {
+                emit(
+                    "No playlists.json in " +
+                        com.slotify.app.data.portableJsonSearchDirs().joinToString(),
+                )
+                return@launch
+            }
+            // Refresh all portable pins (remapped) before rematch.
+            val portablePins = withContext(Dispatchers.IO) {
+                runCatching { repository.loadManualLinksFromMusicDir() }.getOrNull()
+            }
+            if (portablePins != null && portablePins.byPlaylist.isNotEmpty()) {
+                _manualLinks.value = _manualLinks.value.mergedWith(portablePins)
+                withContext(Dispatchers.IO) { repository.saveManualLinks(_manualLinks.value) }
+            }
+            _playlists.value = mergePlaylists(_playlists.value, incoming)
+            withContext(Dispatchers.IO) { repository.savePlaylists(_playlists.value) }
+            _scanStatus.value = "Imported ${incoming.size} playlist(s); matching…"
+            rematchAll()
+            _scanStatus.value = "Imported ${incoming.size} playlist(s)"
+            emit("Imported ${incoming.size} playlist(s)")
+        }
+    }
+
+    /** Copy current playlists + pins to the Music root for phone transfer. */
+    fun exportPlaylistsToMusicDir() {
+        scope.launch {
+            val count = _playlists.value.size
+            if (count == 0) {
+                emit("No playlists to export")
+                return@launch
+            }
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    repository.savePlaylistsToMusicDir(_playlists.value)
+                    repository.saveManualLinksToMusicDir(_manualLinks.value)
+                }
+            }.onSuccess {
+                val dir = com.slotify.app.data.portableJsonExportDir()
+                emit("Exported $count playlist(s) + match pins to $dir")
+                _importStatus.value = "Exported $count playlist(s) + manual_links.json → $dir"
+            }.onFailure { e ->
+                emit("Export failed: ${e.message}")
+            }
         }
     }
 

@@ -40,3 +40,5 @@ actual fun defaultLibraryRoots(): List<String> =
 
 actual fun defaultSlotifyMusicDir(): String =
     File(File(System.getProperty("user.home"), "Music"), "Slotify").absolutePath
+
+actual fun supportsSymlinkStaging(): Boolean = true

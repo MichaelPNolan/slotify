@@ -87,7 +87,27 @@ class AppRepository {
     }.getOrDefault(emptyList())
 
     fun savePlaylists(playlists: List<AppPlaylist>) {
-        AppFiles.writeText(PLAYLISTS_FILE, json.encodeToString(playlists))
+        val encoded = json.encodeToString(playlists)
+        AppFiles.writeText(PLAYLISTS_FILE, encoded)
+        // Mirror into the managed music folder so a folder copy to the phone
+        // carries playlists with the audio (best-effort; Android may lack write).
+        runCatching { writePlaylistsToMusicDir(playlists, encoded) }
+    }
+
+    /**
+     * Read `playlists.json` from Music library roots only (e.g. `/sdcard/Music`).
+     * Null when missing/unreadable — never falls back to Slotify/.
+     */
+    fun loadPlaylistsFromMusicDir(): List<AppPlaylist>? =
+        loadPortableJson<List<AppPlaylist>>(PLAYLISTS_FILE)
+
+    /** Write playlists to the portable Music root (export for phone copy). */
+    fun savePlaylistsToMusicDir(playlists: List<AppPlaylist>) {
+        writePortableJson(PLAYLISTS_FILE, json.encodeToString(playlists))
+    }
+
+    private fun writePlaylistsToMusicDir(playlists: List<AppPlaylist>, encoded: String) {
+        writePortableJson(PLAYLISTS_FILE, encoded)
     }
 
     // ── Library index cache ──────────────────────────────────────────
@@ -109,7 +129,46 @@ class AppRepository {
     }.getOrNull() ?: ManualLinks()
 
     fun saveManualLinks(links: ManualLinks) {
-        AppFiles.writeText(MANUAL_LINKS_FILE, json.encodeToString(links))
+        val encoded = json.encodeToString(links)
+        AppFiles.writeText(MANUAL_LINKS_FILE, encoded)
+        // Mirror to portable Music root so phone copies carry pins with playlists.
+        runCatching { writePortableJson(MANUAL_LINKS_FILE, encoded) }
+    }
+
+    /** Pins from Music root / Slotify, paths remapped for this device. */
+    fun loadManualLinksFromMusicDir(): ManualLinks? =
+        loadPortableJson<ManualLinks>(MANUAL_LINKS_FILE)?.remapMusicPaths()
+
+    fun saveManualLinksToMusicDir(links: ManualLinks) {
+        writePortableJson(MANUAL_LINKS_FILE, json.encodeToString(links))
+    }
+
+    /**
+     * First existing file named [fileName] under Music library roots only
+     * ([portableJsonSearchDirs]). Null when not found.
+     */
+    private inline fun <reified T> loadPortableJson(fileName: String): T? {
+        for (dir in portableJsonSearchDirs()) {
+            val f = java.io.File(dir, fileName)
+            if (!f.isFile) continue
+            val text = runCatching { f.readText() }.getOrNull() ?: continue
+            val parsed = runCatching { json.decodeFromString<T>(text) }.getOrNull()
+            if (parsed != null) return parsed
+        }
+        return null
+    }
+
+    /** Write JSON to the portable export dir (Music root, fallback Slotify). */
+    private fun writePortableJson(fileName: String, encoded: String) {
+        val root = java.io.File(portableJsonExportDir())
+        root.mkdirs()
+        val tmp = java.io.File(root, "$fileName.tmp")
+        tmp.writeText(encoded)
+        val dest = java.io.File(root, fileName)
+        if (!tmp.renameTo(dest)) {
+            dest.writeText(encoded)
+            tmp.delete()
+        }
     }
 
     // ── Playback resume / shuffle ────────────────────────────────────
@@ -123,6 +182,26 @@ class AppRepository {
     }
 
     // ── Playlist JSON import ─────────────────────────────────────────
+
+    /**
+     * Parse playlist JSON from either export format:
+     * 1. **Full export** — `List<AppPlaylist>` (playlists.json with remote + tracks)
+     * 2. **Loose single** — `{ "name": …, "tracks": [ … ] }` (see Settings)
+     *
+     * Returns all playlists found (7 for a full export, 1 for loose).
+     */
+    fun parsePlaylistJsonFile(content: String): List<AppPlaylist> {
+        val trimmed = content.trim()
+        // Full export: JSON array of AppPlaylist objects.
+        if (trimmed.startsWith("[")) {
+            val list = json.decodeFromString<List<AppPlaylist>>(trimmed)
+            if (list.isNotEmpty()) return list
+            throw IllegalStateException("playlists.json array is empty")
+        }
+        // Single loose playlist object.
+        val one = parsePlaylistJson(content)
+        return listOf(one)
+    }
 
     /** Parse a pasted-file playlist JSON into an [AppPlaylist] (unmatched). */
     fun parsePlaylistJson(content: String, source: PlaylistSource = PlaylistSource.JSON): AppPlaylist {

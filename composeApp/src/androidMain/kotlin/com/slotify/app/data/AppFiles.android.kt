@@ -1,9 +1,15 @@
 package com.slotify.app.data
 
+import android.content.Context
+import android.net.Uri
 import java.io.File
 
 /** Set by MainActivity before any UI/composition runs. */
 internal var androidBaseDir: String = ""
+
+/** App context for content:// SAF reads (JSON import). */
+@Volatile
+internal var androidAppContext: Context? = null
 
 actual object AppFiles {
     actual fun readTextOrNull(name: String): String? {
@@ -29,13 +35,30 @@ actual object AppFiles {
 }
 
 actual fun readExternalTextOrNull(path: String): String? {
-    if (path.startsWith("content://")) return null // SAF paths unsupported for now
-    val f = File(path)
-    return if (f.isFile) runCatching { f.readText() }.getOrNull() else null
+    val p = path.trim()
+    if (p.isEmpty()) return null
+    // SAF document picker result — the only reliable way to read non-media
+    // files under /sdcard on scoped storage.
+    if (p.startsWith("content://")) {
+        val ctx = androidAppContext ?: return null
+        return runCatching {
+            ctx.contentResolver.openInputStream(Uri.parse(p))?.use { input ->
+                input.readBytes().toString(Charsets.UTF_8)
+            }
+        }.getOrNull()
+    }
+    val cleaned = p.removePrefix("file://")
+    val f = File(cleaned)
+    if (!f.isFile) return null
+    return runCatching { f.readText() }.getOrNull()
 }
 
 actual fun defaultLibraryRoots(): List<String> =
-    listOf("/storage/emulated/0/Music", "/sdcard/Music")
+    // /sdcard is what this device’s permissions actually allow for Music.
+    // Single path only — listing both /sdcard and /storage/emulated/0 double-counts.
+    listOf("/sdcard/Music")
 
 actual fun defaultSlotifyMusicDir(): String =
-    "/storage/emulated/0/Music/Slotify"
+    "/sdcard/Music/Slotify"
+
+actual fun supportsSymlinkStaging(): Boolean = false

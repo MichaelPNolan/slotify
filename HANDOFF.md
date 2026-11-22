@@ -42,7 +42,7 @@ User confirmed (2026-10-27): desktop live (scan→match→play), playlist URL im
 | Matcher | ISRC → 0.99; both-axes containment → ≥0.95; blend title 0.55 / artist 0.30 / duration 0.15. Duration soft (vinyl). Wrong-artist gate caps at 0.70. |
 | Manual pins | `manual_links.json`: playlistId → trackKey → path. Rematch applies pins first (`isManual`, conf 1.0). `trackKey` = Spotify id → uri → `name|artistNames`. |
 | YouTube | `yt-dlp` desktop only. Flags: `-f "251/140/bestaudio" -x --audio-format best --embed-metadata --embed-thumbnail`. Staging: `Slotify/downloads/` → promoted to `Slotify/` root under final name. |
-| Managed music dir | Subdirectory of the OS music folder: desktop `~/Music/Slotify`, Android `/storage/emulated/0/Music/Slotify` (`defaultSlotifyMusicDir()`). **Layout:** final named audio at root; `downloads/` + `conversions/` are staging only (temp until promoted). User may **manually purge** staging to reclaim space. No hash store. Auto-added to `libraryRoots` if not already covered by a root. |
+| Managed music dir | Subdirectory of the OS music folder: desktop `~/Music/Slotify`, Android `/sdcard/Music/Slotify` (`defaultSlotifyMusicDir()`). **Layout:** final named audio at root; `downloads/` + `conversions/` are staging only (temp until promoted). User may **manually purge** staging to reclaim space. No hash store. Auto-added to `libraryRoots` if not already covered by a root. |
 | Persistence | JSON under `~/.local/share/slotify/`. Atomic tmp+rename writes. `updateSettings` transforms **on-disk** state. Audio files live under the managed music dir (not in app data). |
 
 ### Spotify import (important)

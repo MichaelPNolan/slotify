@@ -16,20 +16,9 @@ class JaudiotaggerScanner(
 
     override suspend fun scan(roots: List<String>, onProgress: (String) -> Unit): List<LocalTrack> =
         withContext(Dispatchers.IO) {
-            val files = roots.flatMap { root ->
-                val dir = File(root)
-                if (!dir.isDirectory) return@flatMap emptyList()
-                dir.walkTopDown()
-                    // Skip hidden entries (dotfiles/dirs): macOS AppleDouble "._*"
-                    // sidecars and metadata junk have no audio.
-                    .onEnter { !it.name.startsWith(".") && it.canRead() }
-                    .filter { it.isFile && !it.name.startsWith(".") && it.extension.lowercase() in audioExtensions }
-                    // Resolve Slotify staging symlinks to the real library file so
-                    // we don’t index the same audio twice under two paths.
-                    .map { f -> runCatching { f.canonicalFile }.getOrDefault(f) }
-                    .distinctBy { it.absolutePath }
-                    .toList()
-            }
+            // Normalize roots + resolve symlinks + dedupe across the whole set
+            // so overlapping roots can’t double-count (200% reports).
+            val files = collectAudioFiles(roots, audioExtensions, skipHidden = true)
             files.mapIndexed { i, file ->
                 if (i % 25 == 0 || i == files.lastIndex) {
                     onProgress("Reading tags (${i + 1}/${files.size}): ${file.name}")
