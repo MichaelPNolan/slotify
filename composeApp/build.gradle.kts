@@ -67,6 +67,8 @@ kotlin {
             dependencies {
                 implementation(libs.androidx.activity.compose)
                 implementation(libs.ktor.client.okhttp)
+                // Same tag reader as desktop — matching must see identical titles/artists.
+                implementation(libs.jaudiotagger)
             }
         }
     }

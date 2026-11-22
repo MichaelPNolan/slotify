@@ -1,5 +1,6 @@
 package com.slotify.app.match
 
+import com.slotify.app.library.parseFilename
 import com.slotify.app.model.LocalTrack
 import com.slotify.app.model.RemotePlaylist
 import com.slotify.app.model.RemoteTrack
@@ -43,6 +44,23 @@ object Matcher {
             validateIsrc(local.isrc)?.let { lI -> if (rI == lI) return 0.99 }
         }
 
+        val tagScore = scoreTitleArtistDuration(remote, local)
+
+        // Filename axis: Android/desktop tag readers can disagree while the
+        // on-disk name is identical — take the better of tag vs filename score.
+        val parsed = parseFilename(local.filePath)
+        val filenameLocal = local.copy(
+            title = parsed.title,
+            artist = parsed.artist,
+        )
+        if (filenameLocal.title == local.title && filenameLocal.artist == local.artist) {
+            return tagScore
+        }
+        val filenameScore = scoreTitleArtistDuration(remote, filenameLocal)
+        return max(tagScore, filenameScore)
+    }
+
+    private fun scoreTitleArtistDuration(remote: RemoteTrack, local: LocalTrack): Double {
         val nRTitle = normalizeStr(remote.name)
         val nLTitle = normalizeStr(local.displayTitle)
         val titleKnown = nRTitle.isNotEmpty() && nLTitle.isNotEmpty()
@@ -238,15 +256,25 @@ object Matcher {
             val nArtist: String,
             val titleTokens: Set<String>,
             val artistTokens: Set<String>,
+            /** Same fields derived from the filename — ranks when tags disagree. */
+            val nFileTitle: String,
+            val nFileArtist: String,
+            val fileTitleTokens: Set<String>,
+            val fileArtistTokens: Set<String>,
         )
 
         private val entries: List<Entry> = locals.map { l ->
+            val parsed = parseFilename(l.filePath)
             Entry(
                 local = l,
                 nTitle = normalizeStr(l.displayTitle),
                 nArtist = normalizeStr(l.artist),
                 titleTokens = tokenSet(l.displayTitle),
                 artistTokens = tokenSet(l.artist ?: ""),
+                nFileTitle = normalizeStr(parsed.title ?: ""),
+                nFileArtist = normalizeStr(parsed.artist ?: ""),
+                fileTitleTokens = tokenSet(parsed.title ?: ""),
+                fileArtistTokens = tokenSet(parsed.artist ?: ""),
             )
         }
 
@@ -282,20 +310,43 @@ object Matcher {
             artistTokens: Set<String>,
             nRArtists: List<String>,
             e: Entry,
+        ): Double = max(
+            cheapRankAxis(nTitle, titleTokens, artistTokens, nRArtists, e.nTitle, e.nArtist, e.titleTokens, e.artistTokens),
+            cheapRankAxis(
+                nTitle,
+                titleTokens,
+                artistTokens,
+                nRArtists,
+                e.nFileTitle,
+                e.nFileArtist,
+                e.fileTitleTokens,
+                e.fileArtistTokens,
+            ),
+        )
+
+        private fun cheapRankAxis(
+            nTitle: String,
+            titleTokens: Set<String>,
+            artistTokens: Set<String>,
+            nRArtists: List<String>,
+            eTitle: String,
+            eArtist: String,
+            eTitleTokens: Set<String>,
+            eArtistTokens: Set<String>,
         ): Double {
             var best = 0.0
-            if (nTitle.isNotEmpty() && e.nTitle.isNotEmpty()) {
-                if (nTitle.contains(e.nTitle) || e.nTitle.contains(nTitle)) {
+            if (nTitle.isNotEmpty() && eTitle.isNotEmpty()) {
+                if (nTitle.contains(eTitle) || eTitle.contains(nTitle)) {
                     best = max(best, 0.95)
                 }
-                best = max(best, jaccard(titleTokens, e.titleTokens))
+                best = max(best, jaccard(titleTokens, eTitleTokens))
             }
-            if (artistTokens.isNotEmpty() && e.artistTokens.isNotEmpty()) {
+            if (artistTokens.isNotEmpty() && eArtistTokens.isNotEmpty()) {
                 val contain = nRArtists.any { a ->
-                    e.nArtist.isNotEmpty() && (e.nArtist.contains(a) || a.contains(e.nArtist))
+                    eArtist.isNotEmpty() && (eArtist.contains(a) || a.contains(eArtist))
                 }
                 if (contain) best = max(best, 0.85)
-                best = max(best, 0.7 * jaccard(artistTokens, e.artistTokens))
+                best = max(best, 0.7 * jaccard(artistTokens, eArtistTokens))
             }
             return best
         }

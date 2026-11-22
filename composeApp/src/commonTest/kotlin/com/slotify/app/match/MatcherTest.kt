@@ -134,6 +134,39 @@ class MatcherTest {
         assertTrue(conf >= 0.95, "expected >=0.95, got $conf")
     }
 
+    @Test
+    fun wrongTagStillMatchesWhenFilenameAgrees() {
+        // Android MediaMetadataRetriever sometimes yields a junk title while the
+        // on-disk name is identical to desktop — filename axis must still score.
+        val conf = Matcher.matchConfidence(
+            remote = remote("Blue Moon", "Billie Holiday"),
+            local = local(
+                title = "unknown",
+                artist = "unknown",
+                path = "/music/Billie Holiday - Blue Moon.mp3",
+            ),
+        )
+        assertTrue(conf >= Matcher.DEFAULT_THRESHOLD, "expected >=${Matcher.DEFAULT_THRESHOLD}, got $conf")
+    }
+
+    @Test
+    fun bestMatchFindsFileWhenTagsAreWrongButNameIsRight() {
+        val result = Matcher.bestMatch(
+            remote("Blue Moon", "Billie Holiday"),
+            locals = listOf(
+                local(
+                    title = "Track 01",
+                    artist = "Various Artists",
+                    path = "/music/Billie Holiday - Blue Moon.mp3",
+                ),
+                local("Totally Different", "Nobody", path = "/other.mp3"),
+            ),
+        )
+        assertNotNull(result)
+        assertEquals("/music/Billie Holiday - Blue Moon.mp3", result.local.filePath)
+        assertTrue(result.confidence >= Matcher.DEFAULT_THRESHOLD)
+    }
+
     // ── bestMatch ────────────────────────────────────────────────────
 
     @Test
