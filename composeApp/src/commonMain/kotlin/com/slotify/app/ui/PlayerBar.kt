@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.FilledIconButton
@@ -27,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -36,6 +38,7 @@ import com.slotify.app.state.AppState
 fun PlayerBar(state: AppState) {
     val nowPlaying by state.nowPlaying.collectAsState()
     val snapshot by state.player.snapshot.collectAsState()
+    val shuffle by state.shuffleEnabled.collectAsState()
     val now = nowPlaying ?: return
 
     var seekValue by remember { mutableStateOf<Float?>(null) }
@@ -82,6 +85,17 @@ fun PlayerBar(state: AppState) {
             }
             Spacer(Modifier.width(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                IconButton(onClick = { state.setShuffle(!shuffle) }) {
+                    Icon(
+                        Icons.Default.Shuffle,
+                        contentDescription = if (shuffle) "Shuffle on" else "Shuffle off",
+                        tint = if (shuffle) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
                 IconButton(onClick = { state.previous() }) {
                     Icon(Icons.Default.SkipPrevious, contentDescription = "Previous")
                 }

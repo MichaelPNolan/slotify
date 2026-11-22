@@ -20,6 +20,23 @@ data class AppSettings(
     val volume: Float = 1.0f,
 )
 
+/** Resume point for one playlist (survives app restart). */
+@Serializable
+data class PlaylistProgress(
+    /** Play order as track keys (Matcher.trackKey) — shuffle-safe. */
+    val orderKeys: List<String> = emptyList(),
+    val orderIndex: Int = -1,
+    val positionMs: Long = 0L,
+)
+
+/** Global playback session state persisted to [AppRepository.PLAYBACK_FILE]. */
+@Serializable
+data class PlaybackStore(
+    val activePlaylistId: String? = null,
+    val shuffle: Boolean = false,
+    val byPlaylist: Map<String, PlaylistProgress> = emptyMap(),
+)
+
 /** JSON file accepted by "import from file": loose schema, common in exports. */
 @Serializable
 data class PlaylistJsonFile(
@@ -95,6 +112,16 @@ class AppRepository {
         AppFiles.writeText(MANUAL_LINKS_FILE, json.encodeToString(links))
     }
 
+    // ── Playback resume / shuffle ────────────────────────────────────
+
+    fun loadPlayback(): PlaybackStore = runCatching {
+        AppFiles.readTextOrNull(PLAYBACK_FILE)?.let { json.decodeFromString<PlaybackStore>(it) }
+    }.getOrNull() ?: PlaybackStore()
+
+    fun savePlayback(store: PlaybackStore) {
+        AppFiles.writeText(PLAYBACK_FILE, json.encodeToString(store))
+    }
+
     // ── Playlist JSON import ─────────────────────────────────────────
 
     /** Parse a pasted-file playlist JSON into an [AppPlaylist] (unmatched). */
@@ -139,5 +166,6 @@ class AppRepository {
         const val PLAYLISTS_FILE = "playlists.json"
         const val LIBRARY_FILE = "library.json"
         const val MANUAL_LINKS_FILE = "manual_links.json"
+        const val PLAYBACK_FILE = "playback.json"
     }
 }

@@ -18,40 +18,72 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.slotify.app.platform.readClipboardText
 import com.slotify.app.state.AppState
 import com.slotify.app.state.SpotifyStatus
+import kotlinx.coroutines.launch
 
 @Composable
 fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
-    val playlists by state.playlists.collectAsState()
+    val allPlaylists by state.playlists.collectAsState()
+    val playlists = allPlaylists.filterNot { it.trashed }
+    val trashed = allPlaylists.filter { it.trashed }
     val importStatus by state.importStatus.collectAsState()
     val spotifyStatus by state.spotifyStatus.collectAsState()
     val spotifyName by state.spotifyDisplayName.collectAsState()
+    val activePlaylistId by state.activePlaylistId.collectAsState()
+    val shuffle by state.shuffleEnabled.collectAsState()
+    val playerSnap by state.player.snapshot.collectAsState()
+    val playingNow = playerSnap.isPlaying
+    val searchHits by state.playlistSearchResults.collectAsState()
+    val searchStatus by state.playlistSearchStatus.collectAsState()
+    val searchRunning by state.playlistSearchRunning.collectAsState()
     var playlistUrl by rememberSaveable { mutableStateOf("") }
+    var publicQuery by rememberSaveable { mutableStateOf("") }
+    var clipboardHint by rememberSaveable { mutableStateOf<String?>(null) }
+    var showTrash by rememberSaveable { mutableStateOf(false) }
+    var deleteTrashAudio by rememberSaveable { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val trashOnlyCount = remember(trashed, allPlaylists) {
+        if (trashed.isEmpty()) 0 else state.trashOnlyAudioPaths().size
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -83,21 +115,48 @@ fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
                 value = playlistUrl,
                 onValueChange = { playlistUrl = it },
                 modifier = Modifier.weight(1f),
-                label = { Text("Paste playlist URL") },
+                label = { Text("Playlist URL") },
                 placeholder = { Text("https://open.spotify.com/playlist/…") },
                 singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+                ),
                 supportingText = {
-                    Text(
-                        when (spotifyStatus) {
-                            SpotifyStatus.CONNECTED ->
-                                "Import just this playlist (metadata only)"
-                            else ->
-                                "Public playlists work without login; private ones use your Floorp session"
-                        },
-                    )
+                    val hint = clipboardHint
+                    when {
+                        hint != null -> Text(hint, color = MaterialTheme.colorScheme.error)
+                        spotifyStatus == SpotifyStatus.CONNECTED ->
+                            Text("Paste (button or Ctrl+V) · Import adds just this playlist")
+                        else ->
+                            Text("Public playlists work without login; private ones use your Floorp session")
+                    }
                 },
             )
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(4.dp))
+            // Explicit paste — some desktop IMEs / focus states swallow Ctrl+V.
+            IconButton(
+                onClick = {
+                    scope.launch {
+                        val clip = readClipboardText()
+                        when {
+                            clip.isNullOrEmpty() -> {
+                                clipboardHint = "Clipboard is empty or unreadable — copy a URL first"
+                            }
+                            else -> {
+                                playlistUrl = clip
+                                clipboardHint = null
+                            }
+                        }
+                    }
+                },
+            ) {
+                Icon(
+                    Icons.Default.ContentPaste,
+                    contentDescription = "Paste from clipboard",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Spacer(Modifier.width(4.dp))
             FilledTonalButton(
                 onClick = {
                     state.importFromSpotifyUrl(playlistUrl.trim())
@@ -108,6 +167,95 @@ fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
                 Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Import")
+            }
+        }
+
+        // Search public Spotify playlists (artist / genre / …) → pick → import.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = publicQuery,
+                onValueChange = { publicQuery = it },
+                modifier = Modifier.weight(1f),
+                label = { Text("Search public playlists") },
+                placeholder = { Text("Artist name, genre…") },
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+                ),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                    onSearch = {
+                        if (!searchRunning && publicQuery.isNotBlank()) {
+                            state.searchPublicPlaylists(publicQuery)
+                        }
+                    },
+                ),
+                supportingText = {
+                    searchStatus?.let {
+                        Text(it, color = MaterialTheme.colorScheme.primary)
+                    }
+                },
+            )
+            Spacer(Modifier.width(4.dp))
+            FilledTonalButton(
+                onClick = { state.searchPublicPlaylists(publicQuery) },
+                enabled = !searchRunning && publicQuery.isNotBlank(),
+            ) {
+                Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Search")
+            }
+        }
+        if (searchRunning) {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+            )
+        }
+        if (searchHits.isNotEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                searchHits.forEach { hit ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = hit.title,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = hit.spotifyUrl,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(
+                            onClick = { state.importFromSpotifyUrl(hit.url) },
+                            enabled = !searchRunning,
+                        ) {
+                            Text("Import")
+                        }
+                    }
+                }
+                TextButton(onClick = { state.clearPlaylistSearch() }) {
+                    Text("Clear results")
+                }
             }
         }
 
@@ -137,8 +285,34 @@ fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
             }
         }
 
+        // Soft-delete: mark rows in the list, then move to trash.
+        val markedPlaylists = playlists.count { it.markedForDelete }
+        if (markedPlaylists > 0) {
+            OutlinedButton(
+                onClick = { state.deleteMarkedPlaylists() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+            ) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "Move marked to trash ($markedPlaylists)",
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+
         if (playlists.isNotEmpty()) {
             LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -147,7 +321,13 @@ fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { state.openPlaylist(playlist.id) },
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (playlist.markedForDelete) {
+                                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            },
+                        ),
                     ) {
                         Row(
                             modifier = Modifier.padding(12.dp),
@@ -156,7 +336,11 @@ fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
                             Icon(
                                 Icons.Default.MusicNote,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = if (playlist.markedForDelete) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                },
                                 modifier = Modifier.size(40.dp),
                             )
                             Spacer(Modifier.width(12.dp))
@@ -169,14 +353,23 @@ fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
                                     fontWeight = FontWeight.SemiBold,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
+                                    color = if (playlist.markedForDelete) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
                                 )
                                 Text(
-                                    text = "$matched/$total matched",
+                                    text = buildString {
+                                        append("$matched/$total matched")
+                                        if (playlist.markedForDelete) append(" · marked for delete")
+                                        if (shuffle && activePlaylistId == playlist.id) append(" · shuffle")
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = if (total > 0 && matched == total) {
-                                        MaterialTheme.colorScheme.tertiary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = when {
+                                        playlist.markedForDelete -> MaterialTheme.colorScheme.error
+                                        total > 0 && matched == total -> MaterialTheme.colorScheme.tertiary
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
                                     },
                                 )
                                 playlist.remote.description?.takeIf { it.isNotBlank() }?.let {
@@ -189,11 +382,154 @@ fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
                                     )
                                 }
                             }
+                            // Mark / unmark for delete (same idea as track Del chip).
+                            SuggestionChip(
+                                onClick = { state.togglePlaylistMarkForDelete(playlist.id) },
+                                label = {
+                                    Text(
+                                        if (playlist.markedForDelete) "Marked" else "Mark",
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                },
+                                colors = SuggestionChipDefaults.suggestionChipColors(
+                                    containerColor = if (playlist.markedForDelete) {
+                                        MaterialTheme.colorScheme.error.copy(alpha = 0.20f)
+                                    } else {
+                                        MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
+                                    },
+                                    labelColor = if (playlist.markedForDelete) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.outline
+                                    },
+                                ),
+                            )
+                            Spacer(Modifier.width(4.dp))
                             if (matched > 0) {
-                                IconButton(onClick = { state.playPlaylist(playlist.id, 0) }) {
-                                    Icon(Icons.Default.PlayArrow, contentDescription = "Play")
+                                val isThisPlaying =
+                                    activePlaylistId == playlist.id && playingNow
+                                IconButton(
+                                    onClick = { state.togglePlaylistPlay(playlist.id) },
+                                ) {
+                                    Icon(
+                                        imageVector = if (isThisPlaying) {
+                                            Icons.Default.Stop
+                                        } else {
+                                            Icons.Default.PlayArrow
+                                        },
+                                        contentDescription = if (isThisPlaying) {
+                                            "Stop"
+                                        } else {
+                                            "Play"
+                                        },
+                                        tint = if (isThisPlaying) {
+                                            MaterialTheme.colorScheme.error
+                                        } else {
+                                            MaterialTheme.colorScheme.primary
+                                        },
+                                    )
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        } else if (trashed.isEmpty()) {
+            // Empty hint already shown above when playlists empty.
+        }
+
+        // ── Trash ────────────────────────────────────────────────────
+        if (trashed.isNotEmpty() || showTrash) {
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Trash (${trashed.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { showTrash = !showTrash }) {
+                    Text(if (showTrash) "Hide" else "Show")
+                }
+            }
+            if (showTrash) {
+                Text(
+                    text = "Deleted playlists stay here until you empty the trash.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+                if (trashOnlyCount > 0) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = deleteTrashAudio,
+                            onCheckedChange = { deleteTrashAudio = it },
+                        )
+                        Text(
+                            text = "Also delete $trashOnlyCount audio file(s) used only by these playlists",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                OutlinedButton(
+                    onClick = {
+                        state.emptyTrash(deleteUniqueAudio = deleteTrashAudio)
+                        deleteTrashAudio = false
+                    },
+                    enabled = trashed.isNotEmpty(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                ) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("Empty trash", color = MaterialTheme.colorScheme.error)
+                }
+                trashed.forEach { playlist ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = playlist.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = "${playlist.matchedCount}/${playlist.resolvedTracks.size} matched · in trash",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                            )
+                        }
+                        TextButton(onClick = { state.restorePlaylistFromTrash(playlist.id) }) {
+                            Icon(
+                                Icons.Default.Restore,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("Restore")
                         }
                     }
                 }

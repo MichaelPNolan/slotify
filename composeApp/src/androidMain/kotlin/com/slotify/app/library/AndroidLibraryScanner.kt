@@ -25,6 +25,10 @@ class AndroidLibraryScanner(
                 dir.walkTopDown()
                     .onEnter { it.canRead() }
                     .filter { it.isFile && it.extension.lowercase() in audioExtensions }
+                    // After a desktop copy, Slotify may still contain links —
+                    // resolve to the real path when possible.
+                    .map { f -> runCatching { f.canonicalFile }.getOrDefault(f) }
+                    .distinctBy { it.absolutePath }
                     .toList()
             }
             files.mapIndexed { i, file ->
@@ -42,15 +46,16 @@ class AndroidLibraryScanner(
     }
 
     private fun readFileTags(file: File): LocalTrack {
-        val parsed = parseFilename(file.name)
+        val canonical = runCatching { file.canonicalFile }.getOrDefault(file)
+        val parsed = parseFilename(canonical.name)
         val base = LocalTrack(
-            filePath = file.absolutePath,
-            fileFormat = file.extension.lowercase(),
-            fileSizeBytes = file.length(),
+            filePath = canonical.absolutePath,
+            fileFormat = canonical.extension.lowercase(),
+            fileSizeBytes = canonical.length(),
         )
         val retriever = MediaMetadataRetriever()
         return try {
-            retriever.setDataSource(file.absolutePath)
+            retriever.setDataSource(canonical.absolutePath)
             base.copy(
                 title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
                     ?.ifBlank { null } ?: parsed.title,

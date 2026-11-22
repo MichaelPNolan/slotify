@@ -37,3 +37,6 @@ actual fun readExternalTextOrNull(path: String): String? {
 
 actual fun defaultLibraryRoots(): List<String> =
     listOf(File(System.getProperty("user.home"), "Music").absolutePath)
+
+actual fun defaultSlotifyMusicDir(): String =
+    File(File(System.getProperty("user.home"), "Music"), "Slotify").absolutePath

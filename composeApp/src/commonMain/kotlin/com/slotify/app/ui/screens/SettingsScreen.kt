@@ -12,9 +12,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FileOpen
-import androidx.compose.material.icons.filled.Login
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -107,7 +108,7 @@ fun SettingsScreen(state: AppState, pkceAwait: suspend (String) -> String) {
                     enabled = clientId.isNotBlank(),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Icon(Icons.Default.Login, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.AutoMirrored.Filled.Login, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("Sign in with Spotify (browser)")
                 }
@@ -173,6 +174,13 @@ fun SettingsScreen(state: AppState, pkceAwait: suspend (String) -> String) {
 
         // ── Library ──────────────────────────────────────────────────
         SectionTitle("Music library (${library.size} indexed)")
+        Text(
+            text = "Folders scanned for matching. On Android use the same kind of roots " +
+                "as desktop (e.g. /storage/emulated/0/Music) — Slotify’s own folder is " +
+                "under Music and is included automatically after you copy files there.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         settings.libraryRoots.forEach { root ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -213,6 +221,31 @@ fun SettingsScreen(state: AppState, pkceAwait: suspend (String) -> String) {
         scanStatus?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
         }
+
+        HorizontalDivider()
+
+        // ── Stage playlist files for phone copy ──────────────────────
+        SectionTitle("Slotify folder (phone copy)")
+        Text(
+            text = "Symlink every matched playlist file into the Slotify directory " +
+                "so a folder copy carries only playlist tracks (not the whole Music tree). " +
+                "Copy with “follow symbolic links” (cp -L / rsync -L) so the phone gets real files.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedButton(
+            onClick = { state.stagePlaylistFilesAsSymlinks() },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Stage playlist files as links into Slotify")
+        }
+        Text(
+            text = com.slotify.app.data.defaultSlotifyMusicDir(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
 
         HorizontalDivider()
 

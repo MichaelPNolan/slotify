@@ -73,6 +73,7 @@ class YoutubeDlpSource(
         dir.mkdirs()
 
         onProgress("Starting download…")
+        val baseName = preferredBaseName(result)
         val process = ProcessBuilder(
             binary,
             "-f", "251/140/bestaudio",
@@ -80,12 +81,15 @@ class YoutubeDlpSource(
             "--embed-metadata", "--embed-thumbnail",
             "--newline",
             "--no-warnings",
-            "-o", "${dir.absolutePath}/%(title).180s [%(id)s].%(ext)s",
+            "-o", "${dir.absolutePath}/$baseName.%(ext)s",
             result.url,
         ).redirectErrorStream(true).start()
 
         var lastPct = -1
+        val outputLines = mutableListOf<String>()
         process.inputStream.bufferedReader().forEachLine { line ->
+            outputLines += line
+            if (outputLines.size > 80) outputLines.removeAt(0)
             val pct = Regex("""\[download]\s+(\d+)\.""").find(line)?.groupValues?.get(1)?.toIntOrNull()
             if (pct != null && pct != lastPct && pct % 10 == 0) {
                 lastPct = pct
@@ -93,26 +97,68 @@ class YoutubeDlpSource(
             }
         }
         val exit = waitOrKill(process, 15 * 60_000)
-        if (exit != 0) {
-            throw IllegalStateException("yt-dlp download failed (exit $exit)")
+
+        // Locate audio even if a postprocessing step (e.g. thumbnail embed) failed.
+        val audioFile = dir.listFiles()
+            ?.filter { f -> f.isFile && f.extension in AUDIO_LIKE }
+            ?.filter { f ->
+                f.name.startsWith(baseName) || f.name.contains("[${result.videoId}]")
+            }
+            ?.maxByOrNull { f ->
+                when {
+                    f.name.startsWith(baseName) && f.extension == "opus" -> 4
+                    f.name.startsWith(baseName) -> 3
+                    f.extension == "opus" -> 2
+                    else -> 1
+                }
+            }
+
+        if (exit != 0 && audioFile == null) {
+            val tail = outputLines.takeLast(12).joinToString("\n")
+            throw IllegalStateException("yt-dlp failed (exit $exit):\n$tail")
         }
 
-        // Locate the produced audio file by its [videoId] tag in the name.
-        val audioFile = dir.listFiles()
-            ?.filter { f -> f.isFile && f.name.contains("[${result.videoId}]") && f.extension in AUDIO_LIKE }
-            ?.maxByOrNull { f -> if (f.extension == "opus") 2 else if (f.extension == "m4a") 1 else 0 }
+        val saved = audioFile
             ?: throw IllegalStateException("Download finished but no audio file found in $targetDir")
 
         // Best-effort cleanup of stray thumbnail intermediates from failed embeds.
         dir.listFiles()?.forEach { f ->
-            if (f.isFile && f.name.contains("[${result.videoId}]") &&
-                f.extension.lowercase() in setOf("png", "webp", "jpg", "jpeg")
-            ) {
-                runCatching { f.delete() }
+            if (f.isFile && f.extension.lowercase() in setOf("png", "webp", "jpg", "jpeg")) {
+                val byBase = f.nameWithoutExtension == baseName
+                val byId = f.name.contains("[${result.videoId}]")
+                if (byBase || byId) runCatching { f.delete() }
             }
         }
-        onProgress("Saved ${audioFile.name}")
-        audioFile.absolutePath
+        onProgress("Saved ${saved.name}")
+        saved.absolutePath
+    }
+
+    /**
+     * On-disk basename: `Artist - Title` when channel looks like an artist,
+     * else sanitized title. No video id in the name (id remains in tags/URL).
+     */
+    private fun preferredBaseName(result: YoutubeSearchResult): String {
+        val title = sanitizeFileComponent(result.title)
+        val channel = result.channel?.takeIf { it.isNotBlank() }?.let(::sanitizeFileComponent)
+        val artist = channel?.takeIf {
+            !it.contains(" - Topic", ignoreCase = true) &&
+                !it.contains("Official", ignoreCase = true) &&
+                !it.equals(title, ignoreCase = true)
+        }
+        val base = when {
+            artist != null && !title.contains(artist, ignoreCase = true) -> "$artist - $title"
+            else -> title
+        }
+        return base.take(180).trim().ifBlank { result.videoId }
+    }
+
+    private fun sanitizeFileComponent(raw: String): String {
+        val cleaned = raw
+            .replace(Regex("""[/\\?%*:|"<>\x00-\x1f]"""), " ")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+            .trimEnd('.')
+        return cleaned.ifBlank { "unknown" }
     }
 
     private fun waitOrKill(process: Process, timeoutMs: Long): Int {

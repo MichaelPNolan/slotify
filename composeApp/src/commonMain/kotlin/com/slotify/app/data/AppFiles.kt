@@ -12,3 +12,62 @@ expect fun readExternalTextOrNull(path: String): String?
 
 /** Suggested music library roots for this platform. */
 expect fun defaultLibraryRoots(): List<String>
+
+/**
+ * Platform “managed” directory for files Slotify downloads/exports:
+ * a subdirectory of the OS music folder (e.g. `~/Music/Slotify`).
+ * Movable with the library; not a hashed store — plain named audio files.
+ *
+ * Layout under that root:
+ * - final named audio files live at the root
+ * - `downloads/` and `conversions/` are **staging only** (temp until promoted);
+ *   purge manually to reclaim space
+ */
+expect fun defaultSlotifyMusicDir(): String
+
+/** Staging subdirs under [defaultSlotifyMusicDir] — temp; user may purge. */
+val SLOTIFY_STAGING_DIRS = listOf("downloads", "conversions")
+
+fun slotifyDownloadsDir(root: String = defaultSlotifyMusicDir()): String =
+    root.trimEnd('/') + "/downloads"
+
+fun slotifyConversionsDir(root: String = defaultSlotifyMusicDir()): String =
+    root.trimEnd('/') + "/conversions"
+
+/** True when [path] is inside the managed Slotify root (not staging). */
+fun isUnderSlotifyRoot(path: String, root: String = defaultSlotifyMusicDir()): Boolean {
+    val p = path.replace('\\', '/').trimEnd('/')
+    val r = root.replace('\\', '/').trimEnd('/')
+    return p == r || p.startsWith("$r/")
+}
+
+/**
+ * Sanitize a display name into an on-disk basename (no extension).
+ * Collapses whitespace and strips path-illegal characters.
+ */
+fun sanitizeSlotifyBaseName(raw: String): String {
+    val cleaned = raw
+        .replace(Regex("""[/\\?%*:|"<>\x00-\x1f]"""), " ")
+        .replace(Regex("""\s+"""), " ")
+        .trim()
+        .trimEnd('.')
+    return cleaned.ifBlank { "track" }
+}
+
+/**
+ * If [path] is a symlink, return its target (absolute, normalized);
+ * otherwise return [path] unchanged. Used so the playlist UI can show the
+ * original library source even when the match points at a Slotify link.
+ */
+fun resolveSymlinkTarget(path: String): String = try {
+    val p = java.nio.file.Paths.get(path)
+    if (java.nio.file.Files.isSymbolicLink(p)) {
+        val link = java.nio.file.Files.readSymbolicLink(p)
+        val abs = if (link.isAbsolute) link else p.parent?.resolve(link) ?: link
+        abs.normalize().toString()
+    } else {
+        path
+    }
+} catch (_: Exception) {
+    path
+}

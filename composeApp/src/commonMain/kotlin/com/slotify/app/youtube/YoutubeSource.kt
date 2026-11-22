@@ -43,13 +43,109 @@ expect fun createYoutubeSource(): YoutubeSource
 // ── Pure helpers (commonMain, unit-tested) ───────────────────────────────
 
 object YoutubeQuery {
-    /** Default search query for an unmatched track — user can edit it in the dialog. */
-    fun forTrack(track: RemoteTrack): String =
-        listOf(track.name, track.primaryArtist)
-            .filter { it.isNotBlank() }
-            .joinToString(" ")
-            .trim()
+    /**
+     * Default search query for one unmatched track.
+     *
+     * Uses **only** that track’s Spotify metadata (title + its own artists).
+     * The playlist name is never an artist source — even when one artist
+     * dominates the playlist (e.g. “Tai Orathai Mix”).
+     *
+     * Artist first often works better for non-English catalogs on YouTube.
+     */
+    fun forTrack(track: RemoteTrack): String {
+        val title = track.name.trim()
+        val artist = track.primaryArtist.trim()
+        // Reject a track artist that is literally blank after trim only —
+        // never substitute playlist/owner/context strings here.
+        return when {
+            artist.isNotEmpty() && title.isNotEmpty() -> "$artist $title"
+            title.isNotEmpty() -> title
+            else -> artist
+        }.trim()
+    }
+
+    /**
+     * Ordered query variants for [baseQuery]: YouTube’s search API sometimes
+     * returns **zero** hits for a phrase that works fine on youtube.com
+     * (e.g. “Hoochie Coochie Man”). Retry with light edits before giving up.
+     * Variants are derived from [track] only — never from a playlist title.
+     */
+    fun fallbacks(baseQuery: String, track: RemoteTrack): List<String> {
+        val seen = LinkedHashSet<String>()
+        fun add(raw: String) {
+            val q = raw.trim().replace(Regex("\\s+"), " ")
+            if (q.isNotEmpty()) seen += q
+        }
+
+        val base = baseQuery.trim()
+        add(base)
+        // Apostrophes / curly quotes can zero out the API response.
+        add(base.replace("'", "").replace("’", ""))
+        add(base.replace(Regex("[^\\p{L}\\p{N}\\s]"), " "))
+
+        val title = track.name.trim()
+        val artist = track.primaryArtist.trim()
+        if (artist.isNotEmpty() && title.isNotEmpty()) {
+            add("$artist $title")
+            add("$artist $title audio")
+            add("$artist $title song")
+            add("$title $artist")
+            add("$title $artist audio")
+        }
+        if (title.isNotEmpty()) {
+            add("$title audio")
+            add("$title song")
+            add("$title official audio")
+            // Title-only without any artist string (never playlist name).
+            add(title)
+        }
+        if (artist.isNotEmpty()) {
+            add("$artist $title".trim())
+        }
+        // If the user already edited the query, still try title-only + audio.
+        if (base.isNotEmpty() && base != title && base != artist) {
+            add("$base audio")
+            add("$base song")
+        }
+        return seen.toList()
+    }
 }
+
+/**
+ * Search YouTube with [baseQuery], then [YoutubeQuery.fallbacks] until one
+ * query returns results. Returns the query that worked (or the last tried)
+ * and the raw hits (empty if every variant was empty).
+ */
+suspend fun searchWithFallbacks(
+    youtube: YoutubeSource,
+    baseQuery: String,
+    track: RemoteTrack,
+    max: Int = 8,
+): SearchAttempt {
+    val queries = YoutubeQuery.fallbacks(baseQuery, track)
+    var lastError: Throwable? = null
+    var lastQuery = baseQuery
+    for (q in queries) {
+        lastQuery = q
+        try {
+            val hits = youtube.search(q, max = max)
+            if (hits.isNotEmpty()) {
+                return SearchAttempt(query = q, results = hits, error = null)
+            }
+        } catch (e: Throwable) {
+            lastError = e
+            // Keep trying other phrasings — one bad query shouldn’t abort.
+        }
+    }
+    return SearchAttempt(query = lastQuery, results = emptyList(), error = lastError)
+}
+
+data class SearchAttempt(
+    /** Query that produced [results], or the last variant tried when empty. */
+    val query: String,
+    val results: List<YoutubeSearchResult>,
+    val error: Throwable?,
+)
 
 data class ScoredYoutubeResult(
     val result: YoutubeSearchResult,

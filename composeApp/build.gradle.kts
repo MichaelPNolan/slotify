@@ -3,17 +3,23 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
-    alias(libs.plugins.android.application)
+    alias(libs.plugins.android.kotlin.multiplatform.library)
     alias(libs.plugins.jetbrains.compose)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
 
 kotlin {
-    androidTarget {
+    // AGP 9 supported KMP Android target (not com.android.application/library).
+    android {
+        namespace = "com.slotify.app"
+        compileSdk = 37
+        minSdk = 26
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
         }
+        // commonTest sources exist — opt in so they actually run on Android host.
+        withHostTest {}
     }
     jvm("desktop") {
         compilerOptions {
@@ -22,11 +28,13 @@ kotlin {
     }
     sourceSets {
         commonMain.dependencies {
-            implementation(compose.runtime)
-            implementation(compose.foundation)
-            implementation(compose.material3)
-            implementation(compose.ui)
-            implementation(compose.components.resources)
+            // Direct coordinates — compose.runtime / foundation / … accessors are deprecated.
+            // Versions match ComposePlugin.Dependencies for CMP 1.12.2 (material3 is 1.9.0).
+            implementation("org.jetbrains.compose.runtime:runtime:1.12.2")
+            implementation("org.jetbrains.compose.foundation:foundation:1.12.2")
+            implementation("org.jetbrains.compose.material3:material3:1.9.0")
+            implementation("org.jetbrains.compose.ui:ui:1.12.2")
+            implementation("org.jetbrains.compose.components:components-resources:1.12.2")
             implementation("org.jetbrains.compose.material:material-icons-extended:1.7.3")
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
@@ -37,9 +45,10 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
         }
-        val desktopMain by getting {
+        getByName("desktopMain") {
             dependencies {
-                implementation(compose.desktop.currentOs)
+                // OS-specific desktop runtime (was compose.desktop.currentOs).
+                implementation("org.jetbrains.compose.desktop:desktop-jvm-linux-x64:1.12.2")
                 implementation(libs.ktor.client.cio)
                 implementation(libs.jaudiotagger)
                 implementation(libs.vlcj)
@@ -49,44 +58,16 @@ kotlin {
                 implementation(libs.sqlite.jdbc)
             }
         }
-        val desktopTest by getting {
+        getByName("desktopTest") {
             dependencies {
                 implementation(kotlin("test"))
             }
         }
-        val androidMain by getting {
+        getByName("androidMain") {
             dependencies {
                 implementation(libs.androidx.activity.compose)
                 implementation(libs.ktor.client.okhttp)
             }
-        }
-    }
-}
-
-android {
-    namespace = "com.slotify.app"
-    // 37 required by androidx.compose 1.12.x + okhttp 5.5 AAR metadata.
-    // Preview platform package (platforms;android-37.0); targetSdk stays stable.
-    compileSdk = 37
-
-    defaultConfig {
-        applicationId = "com.slotify.app"
-        minSdk = 26
-        targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
-
-    packaging {
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
 }
@@ -101,4 +82,17 @@ compose.desktop {
             packageVersion = "0.1.0"
         }
     }
+}
+
+// Headless: import a public Spotify playlist URL and match the local library.
+//   ./gradlew :composeApp:populatePlaylist --args="https://open.spotify.com/playlist/…"
+tasks.register<JavaExec>("populatePlaylist") {
+    group = "slotify"
+    description = "Import a Spotify playlist URL and match against library roots"
+    val compilation = kotlin.targets.getByName("desktop")
+        .compilations.getByName("main")
+    dependsOn(compilation.compileTaskProvider)
+    classpath = compilation.output.allOutputs + configurations.getByName("desktopRuntimeClasspath")
+    mainClass.set("com.slotify.app.tools.PopulateCliKt")
+    standardInput = System.`in`
 }

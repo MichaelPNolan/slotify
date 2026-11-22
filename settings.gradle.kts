@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "slotify"
 include(":composeApp")
+include(":androidApp")

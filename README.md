@@ -32,19 +32,20 @@ Optional but useful on this machine’s layout:
 
 ```bash
 mkdir -p ~/tools
-# Place JDK at ~/tools/jdk-21.0.13+9  (or edit env.sh JAVA_HOME)
+# Unpack JDK 21 under ~/tools/ (dir name may vary, e.g. jdk-21.0.13.1+2)
 # Place Android SDK at ~/tools/android-sdk (or edit env.sh ANDROID_HOME)
 ```
 
-`env.sh` (sourced by `./run.sh` and tests):
+`env.sh` (sourced by `./run.sh` and tests) — **edit paths to match your unpack dirs**:
 
 ```bash
-export JAVA_HOME="$HOME/tools/jdk-21.0.13+9"
+export JAVA_HOME="$HOME/tools/jdk-21.0.13.1+2"   # your JDK dir
 export ANDROID_HOME="$HOME/tools/android-sdk"
-export PATH="$JAVA_HOME/bin:$PATH"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+export PATH="$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
 ```
 
-Adjust paths if your JDK/SDK live elsewhere. The Gradle **wrapper** downloads Gradle 9.8.2 itself — you do not need a system Gradle.
+The Gradle **wrapper** downloads Gradle 9.8.2 itself — you do not need a system Gradle.
 
 ### 2. Android SDK packages
 
@@ -94,9 +95,9 @@ source env.sh
 # Tests (desktop; ~2 min first time)
 ./gradlew :composeApp:desktopTest --console=plain
 
-# Android APK
-./gradlew :composeApp:assembleDebug --console=plain
-# → composeApp/build/outputs/apk/debug/composeApp-debug.apk
+# Android APK (thin :androidApp shell over the :composeApp KMP library)
+./gradlew :androidApp:assembleDebug --console=plain
+# → androidApp/build/outputs/apk/debug/androidApp-debug.apk
 ```
 
 Long GUI/build runs: prefer detached shells so an aborted poll does not kill the process.
@@ -114,6 +115,8 @@ Created on first launch under `~/.local/share/slotify/`:
 | `spotify_auth.json` | PKCE / cookie tokens (if you sign in) |
 
 **Never commit these.** They are outside the repo.
+
+Audio **files** Slotify downloads are not stored in app data — they go under `<OS music>/Slotify/` (e.g. `~/Music/Slotify/`) so the tree is movable with your library. Staging subdirs `downloads/` and `conversions/` are temporary until final names are written at the Slotify root.
 
 ### 6. Spotify (optional, metadata only)
 
@@ -139,7 +142,11 @@ Do **not** put Client IDs or cookies in git. `spotify-app.txt` is gitignored.
 
 - Search is keyless (`ytsearchN:` via yt-dlp).
 - Downloads are **opus stream copy** (never re-encode).
-- Files land in `<firstLibraryRoot>/YouTube Downloads/` (must be a scanned root).
+- Files land under the managed dir `<OS music>/Slotify/` (e.g. `~/Music/Slotify/`):
+  - `downloads/` and `conversions/` — **staging only** (temp until the final file is named and moved up)
+  - final named audio (`Artist - Title.ext`) sits at the Slotify root
+  - purge staging yourself when you want space back; Slotify does not auto-delete
+- The managed root is ensured to be inside a scanned library root.
 - Android YouTube fetch is not supported yet (no yt-dlp runtime).
 
 ### 8. Demo fixtures (optional)
@@ -178,12 +185,7 @@ README.md           # fresh-machine setup
 | compileSdk | 37 (preview package) |
 | JDK | 21 |
 
-AGP 9 + KMP in one module needs these `gradle.properties` flags (do not remove until the project is split):
-
-```properties
-android.builtInKotlin=false
-android.newDsl=false
-```
+Modules: **`:composeApp`** is the KMP library (`com.android.kotlin.multiplatform.library` + `jvm("desktop")`). **`:androidApp`** is a thin `com.android.application` shell that produces the APK. No AGP bypass flags in `gradle.properties`.
 
 ---
 

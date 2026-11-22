@@ -111,7 +111,12 @@ fun LibraryScreen(state: AppState) {
                 modifier = Modifier.padding(24.dp),
             )
         } else {
-            LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+            ) {
                 itemsIndexed(filtered, key = { _, it -> it.filePath }) { index, track ->
                     Row(
                         modifier = Modifier

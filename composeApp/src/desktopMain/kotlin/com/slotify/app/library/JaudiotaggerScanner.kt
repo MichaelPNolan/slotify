@@ -24,6 +24,10 @@ class JaudiotaggerScanner(
                     // sidecars and metadata junk have no audio.
                     .onEnter { !it.name.startsWith(".") && it.canRead() }
                     .filter { it.isFile && !it.name.startsWith(".") && it.extension.lowercase() in audioExtensions }
+                    // Resolve Slotify staging symlinks to the real library file so
+                    // we don’t index the same audio twice under two paths.
+                    .map { f -> runCatching { f.canonicalFile }.getOrDefault(f) }
+                    .distinctBy { it.absolutePath }
                     .toList()
             }
             files.mapIndexed { i, file ->
@@ -42,16 +46,19 @@ class JaudiotaggerScanner(
     }
 
     private fun readTrack(file: File): LocalTrack {
+        // Canonical path: playlist rows point at the real source file even if
+        // the walk entered via a Slotify symlink.
+        val canonical = runCatching { file.canonicalFile }.getOrDefault(file)
         val fallback = LocalTrack(
-            filePath = file.absolutePath,
-            fileFormat = file.extension.lowercase(),
-            fileSizeBytes = file.length(),
+            filePath = canonical.absolutePath,
+            fileFormat = canonical.extension.lowercase(),
+            fileSizeBytes = canonical.length(),
         )
         return try {
-            val audio = AudioFileIO.read(file)
+            val audio = AudioFileIO.read(canonical)
             val tag = audio.tag
             val header = audio.audioHeader
-            val parsed = parseFilename(file.name)
+            val parsed = parseFilename(canonical.name)
             fallback.copy(
                 title = tag?.getFirst(FieldKey.TITLE)?.ifBlank { null } ?: parsed.title,
                 artist = tag?.getFirst(FieldKey.ARTIST)?.ifBlank { null } ?: parsed.artist,
@@ -62,7 +69,7 @@ class JaudiotaggerScanner(
             )
         } catch (_: Exception) {
             // Unreadable/corrupt tags → fall back to filename-derived metadata.
-            val parsed = parseFilename(file.name)
+            val parsed = parseFilename(canonical.name)
             fallback.copy(title = parsed.title, artist = parsed.artist)
         }
     }

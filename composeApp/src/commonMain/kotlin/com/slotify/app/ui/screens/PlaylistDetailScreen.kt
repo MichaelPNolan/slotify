@@ -1,6 +1,5 @@
 package com.slotify.app.ui.screens
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -8,24 +7,31 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Text
@@ -33,25 +39,40 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.slotify.app.match.Matcher
 import com.slotify.app.model.RemoteTrack
+import com.slotify.app.model.ResolvedPlaylistTrack
+import com.slotify.app.model.RowMark
 import com.slotify.app.state.AppState
 import com.slotify.app.ui.formatMs
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 @Composable
 fun PlaylistDetailScreen(state: AppState, playlistId: String) {
     val playlists by state.playlists.collectAsState()
     val playlist = playlists.firstOrNull { it.id == playlistId }
+    val youtubeStatus by state.youtubeStatus.collectAsState()
+    val batchRunning by state.youtubeBatchRunning.collectAsState()
+    val activePlaylistId by state.activePlaylistId.collectAsState()
+    val playerSnap by state.player.snapshot.collectAsState()
     var findTarget by remember { mutableStateOf<RemoteTrack?>(null) }
+    var filter by rememberSaveable(playlistId) { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
 
     findTarget?.let { target ->
         FindOnYoutubeDialog(
@@ -67,6 +88,16 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
             Text("Playlist not found")
         }
         return
+    }
+
+    fun matchesFilter(row: ResolvedPlaylistTrack): Boolean {
+        val q = filter.trim()
+        if (q.isEmpty()) return true
+        val t = row.remote
+        return t.name.contains(q, ignoreCase = true) ||
+            t.artistNames.contains(q, ignoreCase = true) ||
+            (t.albumName?.contains(q, ignoreCase = true) == true) ||
+            (row.match?.local?.displayTitle?.contains(q, ignoreCase = true) == true)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -87,8 +118,17 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 val total = playlist.resolvedTracks.size
+                val sourced = playlist.toBeSourcedCount
                 Text(
-                    text = "${playlist.matchedCount}/$total matched · ${playlist.source.name.lowercase()} import",
+                    text = buildString {
+                        append("${playlist.matchedCount}/$total matched")
+                        if (sourced > 0) append(" · $sourced to be sourced")
+                        if (playlist.skipCount > 0) append(" · ${playlist.skipCount} skip")
+                        if (playlist.deleteMarkedCount > 0) {
+                            append(" · ${playlist.deleteMarkedCount} to delete")
+                        }
+                        append(" · ${playlist.source.name.lowercase()} import")
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -96,13 +136,8 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
             IconButton(onClick = { state.rematchPlaylist(playlist.id) }) {
                 Icon(Icons.Default.Refresh, contentDescription = "Re-match")
             }
-            IconButton(onClick = { state.deletePlaylist(playlist.id) }) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = "Delete",
-                    tint = MaterialTheme.colorScheme.error,
-                )
-            }
+            // Playlist delete lives on the list view (mark → Delete marked),
+            // not as a one-click trash icon here.
         }
 
         Row(
@@ -112,16 +147,103 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Button(
-                onClick = { state.playPlaylist(playlist.id, 0) },
+                onClick = { state.togglePlaylistPlay(playlist.id, 0) },
                 enabled = playlist.matchedCount > 0,
                 modifier = Modifier.weight(1f),
             ) {
-                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                val playingThis = activePlaylistId == playlist.id && playerSnap.isPlaying
+                Icon(
+                    if (playingThis) Icons.Default.Stop else Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
                 Spacer(Modifier.width(6.dp))
-                Text(if (playlist.matchedCount > 0) "Play matches" else "No matches yet")
+                Text(
+                    when {
+                        playingThis -> "Stop"
+                        playlist.matchedCount > 0 -> "Play matches"
+                        else -> "No matches yet"
+                    },
+                )
             }
             OutlinedButton(onClick = { state.rematchPlaylist(playlist.id) }) {
                 Text("Re-match")
+            }
+        }
+
+        // Narrow the list by title / artist / album / file name.
+        OutlinedTextField(
+            value = filter,
+            onValueChange = { filter = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            label = { Text("Search in playlist") },
+            placeholder = { Text("Title, artist, album…") },
+            singleLine = true,
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            supportingText = {
+                if (filter.isNotBlank()) {
+                    val n = playlist.resolvedTracks.count { matchesFilter(it) }
+                    Text("Showing $n of ${playlist.resolvedTracks.size}")
+                }
+            },
+        )
+
+        // Marked-for-delete bulk action.
+        if (playlist.deleteMarkedCount > 0) {
+            OutlinedButton(
+                onClick = { state.deleteMarkedTracks(playlist.id) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+            ) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "Delete marked (${playlist.deleteMarkedCount})",
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+
+        // Batch: auto-fetch unmatched rows whose best YouTube hit scores ≥ 85%.
+        if (playlist.toBeSourced.isNotEmpty() && state.youtube.isSupported) {
+            Spacer(Modifier.size(4.dp))
+            OutlinedButton(
+                onClick = { state.batchFetchYoutube(playlist.id, minScore = 0.85) },
+                enabled = !batchRunning,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+            ) {
+                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    if (batchRunning) {
+                        "Fetching ≥85% matches…"
+                    } else {
+                        "YouTube batch — fetch matches ≥85%"
+                    },
+                )
+            }
+            youtubeStatus?.let { s ->
+                if (s.startsWith("Batch") || s.startsWith("Search") || s.contains("download")) {
+                    Text(
+                        text = s,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+                    if (batchRunning) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                }
             }
         }
 
@@ -129,97 +251,83 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
         HorizontalDivider()
         Spacer(Modifier.size(4.dp))
 
-        LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
-            itemsIndexed(playlist.resolvedTracks, key = { i, row -> "${row.remote.id ?: row.remote.name}-$i" }) {
-                    index, row ->
-                val match = row.match
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(enabled = match != null) {
-                            if (match != null) state.playPlaylist(playlist.id, index)
-                        }
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+        // “To be sourced” — unmatched rows only (Link file / YouTube).
+        val unmatchedAll = playlist.resolvedTracks.withIndex().filter { !it.value.isMatched }
+        val unmatchedFiltered = unmatchedAll.filter { matchesFilter(it.value) }
+        if (unmatchedAll.isNotEmpty()) {
+            ToBeSourcedSection(
+                state = state,
+                playlist = playlist,
+                rows = unmatchedFiltered,
+                totalUnmatched = unmatchedAll.size,
+                onFindOnYoutube = { findTarget = it },
+            )
+            Spacer(Modifier.size(8.dp))
+            HorizontalDivider()
+            Spacer(Modifier.size(4.dp))
+        }
+
+        // One-shot gesture hint above the matched list (not on every row).
+        val matchedAll = playlist.resolvedTracks.withIndex().filter { it.value.isMatched }
+        val matchedFiltered = matchedAll.filter { matchesFilter(it.value) }
+        if (matchedAll.isNotEmpty() || unmatchedAll.isEmpty()) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                Text(
+                    text = if (filter.isBlank()) {
+                        "Matched (${matchedAll.size})"
+                    } else {
+                        "Matched (${matchedFiltered.size} of ${matchedAll.size})"
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (matchedAll.isNotEmpty() && state.youtube.isSupported) {
                     Text(
-                        text = "${index + 1}",
+                        text = "Hold 5s or swipe a row left to re-fetch from YouTube",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.width(28.dp),
                     )
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = row.remote.name,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = if (match != null) FontWeight.Medium else FontWeight.Normal,
-                            color = if (match != null) {
-                                MaterialTheme.colorScheme.onSurface
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        val subtitle = buildString {
-                            append(row.remote.artistNames.ifBlank { "Unknown artist" })
-                            row.remote.durationMs?.let { append(" · ").append(formatMs(it)) }
-                            if (match == null) append(" · no local file")
-                        }
-                        Text(
-                            text = subtitle,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    if (match != null) {
-                        if (match.isManual) {
-                            SuggestionChip(
-                                onClick = {
-                                    state.unlinkTrackFile(playlist.id, Matcher.trackKey(row.remote))
-                                },
-                                label = { Text("Linked") },
-                                colors = SuggestionChipDefaults.suggestionChipColors(
-                                    containerColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.18f),
-                                    labelColor = MaterialTheme.colorScheme.tertiary,
-                                ),
+                }
+            }
+        }
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+        ) {
+            // Keep original playlist indices so Play starts at the right row.
+            items(matchedFiltered, key = { (idx, row) -> "m-${row.remote.id ?: row.remote.name}-$idx" }) {
+                    (index, row) ->
+                MatchedRow(
+                    state = state,
+                    playlistId = playlist.id,
+                    row = row,
+                    originalIndex = index,
+                    onRedoYoutube = {
+                        scope.launch {
+                            state.prepareRedoYoutubeMatch(
+                                playlistId = playlist.id,
+                                trackKey = Matcher.trackKey(row.remote),
                             )
-                            Spacer(Modifier.width(4.dp))
+                            findTarget = row.remote
+                        }
+                    },
+                )
+            }
+            if (matchedFiltered.isEmpty() && unmatchedFiltered.isEmpty()) {
+                item {
+                    Text(
+                        text = if (filter.isNotBlank()) {
+                            "No tracks match “$filter”"
                         } else {
-                            ConfidenceChip(confidence = match.confidence)
-                            Spacer(Modifier.width(4.dp))
-                        }
-                        Icon(
-                            Icons.Default.PlayArrow,
-                            contentDescription = "Play",
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                    } else {
-                        TextButton(onClick = {
-                            state.linkTrackToFileFromPicker(playlist.id, Matcher.trackKey(row.remote))
-                        }) {
-                            Icon(
-                                Icons.Default.FolderOpen,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text("Link file", style = MaterialTheme.typography.labelMedium)
-                        }
-                        if (state.youtube.isSupported) {
-                            TextButton(onClick = { findTarget = row.remote }) {
-                                Icon(
-                                    Icons.Default.Search,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text("YouTube", style = MaterialTheme.typography.labelMedium)
-                            }
-                        }
-                    }
+                            "Playlist has no tracks"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 16.dp),
+                    )
                 }
             }
         }
@@ -227,9 +335,379 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
 }
 
 @Composable
-private fun ConfidenceChip(confidence: Double) {
+private fun ToBeSourcedSection(
+    state: AppState,
+    playlist: com.slotify.app.model.AppPlaylist,
+    rows: List<IndexedValue<ResolvedPlaylistTrack>>,
+    totalUnmatched: Int,
+    onFindOnYoutube: (com.slotify.app.model.RemoteTrack) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = if (rows.size == totalUnmatched) {
+                "To be sourced (${rows.size})"
+            } else {
+                "To be sourced (${rows.size} of $totalUnmatched)"
+            },
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+        Text(
+            text = "No local file yet — link a file or fetch from YouTube",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp),
+        )
+        if (rows.isEmpty()) {
+            Text(
+                text = "No unmatched rows match your search",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 280.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+            ) {
+                items(rows, key = { (idx, row) -> "u-${row.remote.id ?: row.remote.name}-$idx" }) {
+                        (_, row) ->
+                    UnmatchedRow(state = state, playlistId = playlist.id, row = row, onFindOnYoutube = onFindOnYoutube)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UnmatchedRow(
+    state: AppState,
+    playlistId: String,
+    row: ResolvedPlaylistTrack,
+    onFindOnYoutube: (com.slotify.app.model.RemoteTrack) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MarkChip(
+            mark = row.mark,
+            onClick = { state.cyclePlaylistRowMark(playlistId, Matcher.trackKey(row.remote)) },
+        )
+        Spacer(Modifier.width(6.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = row.remote.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val subtitle = buildString {
+                append(row.remote.artistNames.ifBlank { "Unknown artist" })
+                row.remote.durationMs?.let { append(" · ").append(formatMs(it)) }
+                append(" · to be sourced")
+            }
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        TextButton(onClick = {
+            state.linkTrackToFileFromPicker(playlistId, Matcher.trackKey(row.remote))
+        }) {
+            Icon(
+                Icons.Default.FolderOpen,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text("Link file", style = MaterialTheme.typography.labelMedium)
+        }
+        if (state.youtube.isSupported) {
+            TextButton(onClick = { onFindOnYoutube(row.remote) }) {
+                Icon(
+                    Icons.Default.Search,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text("YouTube", style = MaterialTheme.typography.labelMedium)
+            }
+        }
+    }
+}
+
+/** Cycles mark: none → Skip → Delete → none. */
+@Composable
+private fun MarkChip(mark: RowMark?, onClick: () -> Unit) {
+    val (label, color) = when (mark) {
+        null -> "Mark" to MaterialTheme.colorScheme.outline
+        RowMark.SKIP -> "Skip" to MaterialTheme.colorScheme.secondary
+        RowMark.DELETE -> "Del" to MaterialTheme.colorScheme.error
+    }
+    SuggestionChip(
+        onClick = onClick,
+        label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+        colors = SuggestionChipDefaults.suggestionChipColors(
+            containerColor = color.copy(alpha = if (mark == null) 0.08f else 0.20f),
+            labelColor = color,
+        ),
+    )
+}
+
+@Composable
+private fun MatchedRow(
+    state: AppState,
+    playlistId: String,
+    row: ResolvedPlaylistTrack,
+    originalIndex: Int,
+    onRedoYoutube: () -> Unit,
+) {
+    val match = row.match ?: return
+    val scope = rememberCoroutineScope()
+    val settings by state.settings.collectAsState()
+    val roots = settings.libraryRoots
+    val activePlaylistId by state.activePlaylistId.collectAsState()
+    val playerSnap by state.player.snapshot.collectAsState()
+    val nowPlaying by state.nowPlaying.collectAsState()
+    val slotifyRoot = remember(settings.libraryRoots) {
+        com.slotify.app.data.defaultSlotifyMusicDir().trimEnd('/')
+    }
+    // Prefer the symlink target so staged links still show the original source.
+    val localPath = remember(match.local.filePath) {
+        com.slotify.app.data.resolveSymlinkTarget(match.local.filePath).replace('\\', '/')
+    }
+    // Same track currently loaded in the player (for play/stop icon).
+    val isCurrentTrack = activePlaylistId == playlistId &&
+        nowPlaying != null &&
+        (nowPlaying!!.path == localPath ||
+            (nowPlaying!!.title == row.remote.name &&
+                nowPlaying!!.artist == row.remote.artistNames.ifBlank { match.local.displayArtist }))
+    val isPlayingThis = isCurrentTrack && playerSnap.isPlaying
+    val matchedViaSlotifyLink = remember(match.local.filePath, localPath) {
+        val raw = match.local.filePath.replace('\\', '/')
+        val rawUnder = raw == slotifyRoot || raw.startsWith("$slotifyRoot/")
+        val targetUnder = localPath == slotifyRoot || localPath.startsWith("$slotifyRoot/")
+        rawUnder && !targetUnder
+    }
+    val underSlotify = !matchedViaSlotifyLink &&
+        (localPath == slotifyRoot || localPath.startsWith("$slotifyRoot/"))
+    val relPath = if (matchedViaSlotifyLink) {
+        // Prefer path of the resolved original source relative to Music roots.
+        com.slotify.app.model.LocalTrack(filePath = localPath).relativeToRoots(roots)
+    } else {
+        match.local.relativeToRoots(roots)
+    }
+    // Existing library (Muse etc.) — not a Slotify download/pin target.
+    // Also true when a Slotify symlink resolves back to a library file.
+    val isExistingLibrary = !underSlotify && relPath != null
+
+    var dragOffsetX by remember { mutableFloatStateOf(0f) }
+    var redoFired by remember { mutableStateOf(false) }
+
+    // Hold 5s → redo; swipe left past threshold → redo; short press → play.
+    val gestureModifier = Modifier
+        .offset { IntOffset(dragOffsetX.roundToInt(), 0) }
+        .pointerInput(playlistId, originalIndex, row.remote) {
+            val threshold = 96.dp.toPx()
+            val holdMs = 5_000L
+            var downTime = 0L
+            var startX = 0f
+            var holdFired = false
+            var swiped = false
+
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull() ?: continue
+                    val pressed = change.pressed
+                    val justDown = pressed && !change.previousPressed
+                    val justUp = !pressed && change.previousPressed
+
+                    if (justDown) {
+                        downTime = change.uptimeMillis
+                        startX = change.position.x
+                        holdFired = false
+                        swiped = false
+                        redoFired = false
+                        dragOffsetX = 0f
+                    }
+
+                    if (pressed) {
+                        val held = change.uptimeMillis - downTime
+                        if (!holdFired && held >= holdMs) {
+                            holdFired = true
+                            redoFired = true
+                            change.consume()
+                            dragOffsetX = 0f
+                            onRedoYoutube()
+                            continue
+                        }
+                        val dx = change.position.x - startX
+                        if (!holdFired && dx < 0f) {
+                            dragOffsetX = dx.coerceAtLeast(-threshold * 1.5f)
+                            if (dx <= -threshold) {
+                                if (!swiped) {
+                                    swiped = true
+                                    redoFired = true
+                                    change.consume()
+                                    dragOffsetX = 0f
+                                    onRedoYoutube()
+                                } else {
+                                    change.consume()
+                                }
+                            }
+                        }
+                    } else if (justUp) {
+                        val held = change.uptimeMillis - downTime
+                        val totalDx = change.position.x - startX
+                        dragOffsetX = 0f
+                        if (!redoFired && !holdFired && !swiped && held < holdMs && totalDx > -threshold) {
+                            state.playPlaylist(playlistId, originalIndex)
+                        }
+                        redoFired = false
+                    }
+                }
+            }
+        }
+
+    val dimmed = row.mark == RowMark.DELETE || row.mark == RowMark.SKIP
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(gestureModifier)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MarkChip(
+            mark = row.mark,
+            onClick = { state.cyclePlaylistRowMark(playlistId, Matcher.trackKey(row.remote)) },
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = "${originalIndex + 1}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(28.dp),
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = row.remote.name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = if (dimmed) {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = buildString {
+                    append(row.remote.artistNames.ifBlank { "Unknown artist" })
+                    row.remote.durationMs?.let { append(" · ").append(formatMs(it)) }
+                    append(" · ").append(match.local.displayTitle)
+                    if (row.mark == RowMark.SKIP) append(" · skipped in play")
+                    if (row.mark == RowMark.DELETE) append(" · marked for delete")
+                },
+                style = MaterialTheme.typography.bodySmall,
+                // Existing-library hits are amber; Slotify downloads stay muted.
+                color = when {
+                    row.mark == RowMark.DELETE -> MaterialTheme.colorScheme.error
+                    isExistingLibrary -> MaterialTheme.colorScheme.secondary
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            // Path under ~/Music only (e.g. Muse.Collection[…]/…), not absolute.
+            if (isExistingLibrary) {
+                Text(
+                    text = relPath.orEmpty(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.85f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else if (matchedViaSlotifyLink) {
+                // Staged symlink — show where it actually lives on disk too.
+                Text(
+                    text = "→ " + (match.local.relativeToRoots(roots) ?: match.local.filePath),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else if (underSlotify) {
+                val under = localPath.removePrefix("$slotifyRoot/").substringBeforeLast('/', "")
+                Text(
+                    text = if (under.isEmpty()) "Slotify" else "Slotify/$under",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (match.isManual) {
+            SuggestionChip(
+                onClick = {
+                    state.unlinkTrackFile(playlistId, Matcher.trackKey(row.remote))
+                },
+                label = { Text("Linked") },
+                colors = SuggestionChipDefaults.suggestionChipColors(
+                    containerColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.18f),
+                    labelColor = MaterialTheme.colorScheme.tertiary,
+                ),
+            )
+            Spacer(Modifier.width(4.dp))
+        } else {
+            ConfidenceChip(confidence = match.confidence, libraryMatch = isExistingLibrary)
+            Spacer(Modifier.width(4.dp))
+        }
+        if (state.youtube.isSupported) {
+            IconButton(onClick = onRedoYoutube) {
+                Icon(
+                    Icons.Default.Search,
+                    contentDescription = "Re-fetch from YouTube",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+        // Same pattern as the playlist list: Stop while this row is playing.
+        IconButton(onClick = { state.playPlaylist(playlistId, originalIndex) }) {
+            Icon(
+                imageVector = if (isPlayingThis) Icons.Default.Stop else Icons.Default.PlayArrow,
+                contentDescription = if (isPlayingThis) "Stop" else "Play",
+                tint = if (isPlayingThis) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConfidenceChip(confidence: Double, libraryMatch: Boolean = false) {
     val percent = (confidence * 100).toInt()
+    // Library matches use the amber secondary so they read differently from
+    // confidence-only green/red chips on Slotify-sourced rows.
     val color = when {
+        libraryMatch -> Color(0xFFFFB74D)
         confidence >= 0.90 -> Color(0xFF66BB6A)
         confidence >= 0.80 -> Color(0xFFFFB74D)
         else -> Color(0xFFE57373)

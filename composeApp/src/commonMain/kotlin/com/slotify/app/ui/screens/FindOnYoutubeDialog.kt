@@ -8,16 +8,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -45,12 +48,13 @@ import com.slotify.app.youtube.YoutubeQuery
 import com.slotify.app.youtube.YoutubeRanking
 import com.slotify.app.youtube.YoutubeSearchResult
 import com.slotify.app.youtube.ScoredYoutubeResult
+import com.slotify.app.youtube.searchWithFallbacks
 import kotlinx.coroutines.launch
 
 /**
  * Find-and-fetch dialog for one unmatched playlist track: editable search
- * query → yt-dlp search → ranked results (title + duration proximity) →
- * click to download as opus stream copy → auto reindex + rematch.
+ * query → yt-dlp search (with fallback phrasings when the API returns 0) →
+ * ranked results → click to download as opus stream copy.
  */
 @Composable
 fun FindOnYoutubeDialog(
@@ -63,61 +67,106 @@ fun FindOnYoutubeDialog(
     var results by remember { mutableStateOf<List<ScoredYoutubeResult>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var emptyNote by remember { mutableStateOf<String?>(null) }
+    var lastQueryUsed by remember { mutableStateOf<String?>(null) }
+    var searchSeq by remember { mutableStateOf(0) }
     val status by state.youtubeStatus.collectAsState()
     val scope = rememberCoroutineScope()
 
-    // Auto-search on open so the user sees several ranked matches immediately.
-    LaunchedEffect(track.videoKey()) {
+    // Auto-search on open (and whenever searchSeq bumps from the Search button).
+    LaunchedEffect(track.videoKey(), searchSeq) {
+        state.clearYoutubeStatusIfIdle()
         searching = true
         error = null
-        val outcome = runCatching {
-            YoutubeRanking.rank(state.youtube.search(query), track)
-        }
+        emptyNote = null
+        val attempt = searchWithFallbacks(state.youtube, query, track)
         searching = false
-        outcome.onSuccess { results = it }
-            .onFailure { e ->
-                results = emptyList()
-                error = e.message
+        lastQueryUsed = attempt.query
+        if (attempt.error != null && attempt.results.isEmpty()) {
+            results = emptyList()
+            error = attempt.error.message ?: "Search failed"
+        } else {
+            results = YoutubeRanking.rank(attempt.results, track)
+            if (results.isEmpty()) {
+                emptyNote = "No YouTube results for “${attempt.query}” — try a different phrase"
+            } else if (!attempt.query.equals(query.trim(), ignoreCase = true)) {
+                emptyNote = null
+                // Surface that we had to retry with another phrasing.
+                error = null
+                // Keep a soft note under the field via emptyNote only when empty;
+                // when non-empty, prepend a note in the status area below.
+                lastQueryUsed = attempt.query
             }
+        }
     }
 
+    // Download runs on AppState’s scope — closing the dialog never cancels it.
     AlertDialog(
-        onDismissRequest = { if (status == null) onDismiss() },
-        title = { Text("Find on YouTube") },
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Find on YouTube", modifier = Modifier.weight(1f))
+                IconButton(onClick = onDismiss) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "Target: ${track.name} — ${track.artistNames.ifBlank { "unknown artist" }}",
+                    text = buildString {
+                        append("Target: ")
+                        append(track.name)
+                        append(" · artist: ")
+                        append(track.artistNames.ifBlank { "unknown artist" })
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "Query uses this track’s artist only — not the playlist name.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                 )
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Search query") },
+                    placeholder = { Text(YoutubeQuery.forTrack(track)) },
                     singleLine = true,
-                    trailingIcon = {
-                        TextButton(onClick = {
-                            scope.launch {
-                                searching = true
-                                error = null
-                                val outcome = runCatching {
-                                    YoutubeRanking.rank(state.youtube.search(query), track)
-                                }
-                                searching = false
-                                outcome.onSuccess { results = it }
-                                    .onFailure { e ->
-                                        results = emptyList()
-                                        error = e.message
-                                    }
-                            }
-                        }) {
-                            Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.width(18.dp))
-                            Text(" Search")
-                        }
-                    },
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                        onSearch = {
+                            if (!searching) searchSeq++
+                        },
+                    ),
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Button(
+                        onClick = { if (!searching) searchSeq++ },
+                        enabled = !searching && query.isNotBlank(),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Search")
+                    }
+                }
 
                 status?.let { s ->
                     Column {
@@ -130,8 +179,20 @@ fun FindOnYoutubeDialog(
                 error?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 }
+                emptyNote?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                }
+                if (lastQueryUsed != null && results.isNotEmpty() &&
+                    !lastQueryUsed.equals(query.trim(), ignoreCase = true)
+                ) {
+                    Text(
+                        text = "Results from “$lastQueryUsed”",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
 
-                if (results.isEmpty() && !searching && status == null) {
+                if (results.isEmpty() && !searching && status == null && error == null && emptyNote == null) {
                     Text(
                         "Stream copy — the original opus audio is kept, never re-encoded.",
                         style = MaterialTheme.typography.bodySmall,
@@ -165,7 +226,7 @@ fun FindOnYoutubeDialog(
                             enabled = status == null,
                             onClick = {
                                 scope.launch {
-                                    state.fetchYoutube(scored.result, playlistId)
+                                    state.fetchYoutube(scored.result, playlistId, remoteTrack = track)
                                 }
                             },
                         )
@@ -174,7 +235,7 @@ fun FindOnYoutubeDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text(if (status == null) "Close" else "Working…") }
+            TextButton(onClick = onDismiss) { Text("Close") }
         },
     )
 }

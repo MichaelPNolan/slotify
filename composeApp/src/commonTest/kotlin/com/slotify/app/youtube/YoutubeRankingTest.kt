@@ -49,8 +49,68 @@ class YoutubeRankingTest {
 
     @Test
     fun queryUsesTitleAndPrimaryArtist() {
-        assertEquals("Take Five Dave Brubeck", YoutubeQuery.forTrack(target))
+        // Artist first, then title — from track metadata only.
+        assertEquals("Dave Brubeck Take Five", YoutubeQuery.forTrack(target))
         assertEquals("Solo Track", YoutubeQuery.forTrack(RemoteTrack(name = "Solo Track")))
+    }
+
+    @Test
+    fun queryNeverUsesPlaylistNameAsArtist() {
+        // Simulates “Tai Orathai Mix” playlist with a guest track — the
+        // playlist title must not appear in the search query.
+        val playlistName = "Tai Orathai Mix"
+        val guest = RemoteTrack(
+            name = "ฝากใบลา",
+            artists = listOf(RemoteArtist(name = "เนย ภัสวรรณ")),
+        )
+        val q = YoutubeQuery.forTrack(guest)
+        assertEquals("เนย ภัสวรรณ ฝากใบลา", q)
+        assertTrue(!q.contains(playlistName), "playlist name leaked into query: $q")
+        assertTrue(!q.contains("Mix"), "playlist suffix leaked into query: $q")
+
+        val variants = YoutubeQuery.fallbacks(q, guest)
+        assertTrue(variants.none { it.contains(playlistName) })
+        assertTrue(variants.none { it.contains("Mix") })
+        // Artist from the track still appears in at least one variant.
+        assertTrue(variants.any { it.contains("เนย ภัสวรรณ") })
+    }
+
+    @Test
+    fun queryWithoutArtistIsTitleOnly() {
+        val noArtist = RemoteTrack(name = "Only Title")
+        assertEquals("Only Title", YoutubeQuery.forTrack(noArtist))
+    }
+
+    @Test
+    fun fallbacksAlwaysIncludeEditedBaseAndAudioVariants() {
+        val track = RemoteTrack(
+            name = "I'm Your Hoochie Coochie Man",
+            artists = listOf(RemoteArtist(name = "Muddy Waters")),
+        )
+        val variants = YoutubeQuery.fallbacks("I'm Your Hoochie Coochie Man Muddy Waters", track)
+        assertTrue(variants.isNotEmpty())
+        assertTrue(
+            variants.any { it.contains("Hoochie Coochie Man") && it.contains("audio") },
+            "should retry with audio suffix, got $variants",
+        )
+        assertTrue(
+            variants.any { !it.contains("'") },
+            "should try apostrophe-stripped query, got $variants",
+        )
+        // Deduped
+        assertEquals(variants.toSet().size, variants.size)
+    }
+
+    @Test
+    fun fallbacksFromUserEditedQueryStillAddHelpfulVariants() {
+        val track = RemoteTrack(
+            name = "I'm Your Hoochie Coochie Man",
+            artists = listOf(RemoteArtist(name = "Muddy Waters")),
+        )
+        val variants = YoutubeQuery.fallbacks("Hoochie Coochie Man", track)
+        assertTrue(variants.first() == "Hoochie Coochie Man")
+        assertTrue(variants.any { it == "Hoochie Coochie Man audio" })
+        assertTrue(variants.any { it.contains("Muddy Waters") && it.contains("Hoochie") })
     }
 
     // ── rank ─────────────────────────────────────────────────────────

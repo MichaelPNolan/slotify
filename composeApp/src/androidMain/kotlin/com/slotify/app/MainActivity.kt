@@ -11,6 +11,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.core.content.ContextCompat
 import com.slotify.app.data.androidBaseDir
+import com.slotify.app.platform.setClipboardContext
 import com.slotify.app.spotify.JsonFileTokenStorage
 import com.slotify.app.state.AppState
 import com.slotify.app.state.createSpotifyPort
@@ -30,6 +31,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // App-private storage for settings/playlists/library index.
         androidBaseDir = filesDir.absolutePath
+        setClipboardContext(this)
 
         requestAudioPermissionIfMissing()
 

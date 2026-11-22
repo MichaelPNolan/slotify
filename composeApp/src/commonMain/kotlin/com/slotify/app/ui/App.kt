@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import com.slotify.app.state.AppState
 import com.slotify.app.state.Tab
 import com.slotify.app.ui.screens.LibraryScreen
@@ -53,7 +54,9 @@ fun App(state: AppState, pkceAwait: suspend (String) -> String = { error("OAuth 
 
     MaterialTheme(colorScheme = SlotifyColors) {
         Surface(modifier = Modifier.fillMaxSize()) {
+            // Full-window shell: fills the desktop tile (no fixed phone column).
             Scaffold(
+                modifier = Modifier.fillMaxSize(),
                 snackbarHost = { SnackbarHost(snackbarHostState) },
                 bottomBar = {
                     Column {
@@ -83,7 +86,7 @@ fun App(state: AppState, pkceAwait: suspend (String) -> String = { error("OAuth 
                     }
                 },
             ) { padding ->
-                Box(modifier = Modifier.padding(padding)) {
+                Box(modifier = Modifier.fillMaxSize().padding(padding)) {
                     when {
                         ui.detailPlaylistId != null -> PlaylistDetailScreen(
                             state = state,

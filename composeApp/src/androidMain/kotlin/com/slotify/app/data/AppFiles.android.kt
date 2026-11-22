@@ -36,3 +36,6 @@ actual fun readExternalTextOrNull(path: String): String? {
 
 actual fun defaultLibraryRoots(): List<String> =
     listOf("/storage/emulated/0/Music", "/sdcard/Music")
+
+actual fun defaultSlotifyMusicDir(): String =
+    "/storage/emulated/0/Music/Slotify"

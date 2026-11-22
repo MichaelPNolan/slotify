@@ -64,6 +64,21 @@ data class LocalTrack(
 
     val displayArtist: String
         get() = artist?.takeIf { it.isNotBlank() } ?: "Unknown artist"
+
+    /**
+     * Path relative to the longest matching [libraryRoots] entry
+     * (e.g. `Muse.Collection[…]/Muse - …/01 - Song.mp3` under `~/Music`).
+     * Null when the file is outside every root.
+     */
+    fun relativeToRoots(libraryRoots: List<String>): String? {
+        val path = filePath.replace('\\', '/')
+        val root = libraryRoots
+            .map { it.replace('\\', '/').trimEnd('/') }
+            .filter { it.isNotEmpty() && (path == it || path.startsWith("$it/")) }
+            .maxByOrNull { it.length }
+            ?: return null
+        return path.removePrefix(root).trimStart('/')
+    }
 }
 
 private fun fileNameFromPath(path: String): String =
@@ -80,11 +95,17 @@ data class TrackMatch(
     val isManual: Boolean = false,
 )
 
+/** User mark on a playlist row: skip in playback, or stage for removal. */
+@Serializable
+enum class RowMark { SKIP, DELETE }
+
 /** One playlist row: the Spotify track plus its local match, if any. */
 @Serializable
 data class ResolvedPlaylistTrack(
     val remote: RemoteTrack,
     val match: TrackMatch? = null,
+    /** Null = unmarked. Survives rematch (AppState re-applies by track key). */
+    val mark: RowMark? = null,
 ) {
     val isMatched: Boolean get() = match != null
 }
@@ -100,9 +121,19 @@ data class AppPlaylist(
     val resolvedTracks: List<ResolvedPlaylistTrack> = emptyList(),
     val importedAtEpochMs: Long = 0L,
     val source: PlaylistSource = PlaylistSource.OAUTH,
+    /** Soft-delete flag on the playlists list (not per-track). */
+    val markedForDelete: Boolean = false,
+    /** In the trash — hidden from the main list until restored or emptied. */
+    val trashed: Boolean = false,
 ) {
     val id: String get() = remote.id
     val name: String get() = remote.name
     val matchedCount: Int get() = resolvedTracks.count { it.isMatched }
     val isFullyMatched: Boolean get() = resolvedTracks.isNotEmpty() && matchedCount == resolvedTracks.size
+    /** Rows with no local file yet — surfaced as the “To be sourced” list. */
+    val toBeSourced: List<ResolvedPlaylistTrack>
+        get() = resolvedTracks.filterNot { it.isMatched }
+    val toBeSourcedCount: Int get() = resolvedTracks.size - matchedCount
+    val skipCount: Int get() = resolvedTracks.count { it.mark == RowMark.SKIP }
+    val deleteMarkedCount: Int get() = resolvedTracks.count { it.mark == RowMark.DELETE }
 }

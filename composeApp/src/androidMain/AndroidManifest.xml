@@ -7,13 +7,9 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
-    <application
-        android:label="Slotify"
-        android:icon="@android:drawable/ic_media_play"
-        android:allowBackup="true"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+    <application>
         <activity
-            android:name=".MainActivity"
+            android:name="com.slotify.app.MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|keyboardHidden|uiMode">
             <intent-filter>
