@@ -1,0 +1,3 @@
+# Machine-local only — package manifests are tracked from the repo root .gitignore
+node_modules/
+.cron-lock

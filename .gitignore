@@ -10,6 +10,9 @@ captures/
 
 # Local secrets / tooling (never commit)
 spotify-app.txt
-.mimocode/
 .kotlin/
 *.log
+
+# MiMoCode: commit package manifests only — rebuild node_modules with npm install
+.mimocode/node_modules/
+.mimocode/.cron-lock

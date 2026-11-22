@@ -15,6 +15,8 @@ git clone https://github.com/MichaelPNolan/slotify.git
 cd slotify
 ```
 
+**Before you code:** read [`HANDOFF.md`](HANDOFF.md) — hard rules, architecture, Spotify/embed constraints, open work (T2), and how to rebuild `.mimocode/`.
+
 ### 1. Required packages (user-space — no sudo)
 
 | Tool | Why | Install hint |
@@ -55,7 +57,30 @@ sdkmanager "platform-tools" "platforms;android-37.0" "build-tools;35.0.0"
 
 **Important:** use the **PREVIEW** package id `platforms;android-37.0` (`sdkmanager --channel=1`). Plain `platforms;android-37` fails with “Failed to find package”. `compileSdk = 37` is required by androidx.compose 1.12.x.
 
-### 3. First build & run
+### 3. Rebuild `.mimocode/` (MiMoCode agent tooling)
+
+Not required to *run* Slotify; required to continue development with MiMoCode in this repo.
+
+```bash
+# From repo root — package.json + package-lock.json are committed; node_modules is not
+mkdir -p .mimocode
+cd .mimocode
+# If package.json is missing (old clone), recreate:
+#   { "dependencies": { "@mimo-ai/plugin": "0.1.15" } }
+npm install
+cd ..
+```
+
+| Path | In git? | Notes |
+|------|---------|--------|
+| `.mimocode/package.json` | yes | pins `@mimo-ai/plugin@0.1.15` |
+| `.mimocode/package-lock.json` | yes | exact transitive versions |
+| `.mimocode/node_modules/` | **no** | ~58MB — `npm install` regenerates |
+| `.mimocode/.cron-lock` | **no** | local scheduler pid — ignore |
+
+Then start MiMoCode from the project root. Long-lived project knowledge for the agent is **`HANDOFF.md` in this repo** (session memory on the original machine may be newer but does not clone).
+
+### 4. First build & run
 
 ```bash
 source env.sh
@@ -76,7 +101,7 @@ source env.sh
 
 Long GUI/build runs: prefer detached shells so an aborted poll does not kill the process.
 
-### 4. Runtime data (not in git)
+### 5. Runtime data (not in git)
 
 Created on first launch under `~/.local/share/slotify/`:
 
@@ -90,7 +115,7 @@ Created on first launch under `~/.local/share/slotify/`:
 
 **Never commit these.** They are outside the repo.
 
-### 5. Spotify (optional, metadata only)
+### 6. Spotify (optional, metadata only)
 
 Slotify **never downloads Spotify audio**.
 
@@ -110,14 +135,14 @@ Paste the Client ID into Settings. Free-account + Development-mode apps are limi
 
 Do **not** put Client IDs or cookies in git. `spotify-app.txt` is gitignored.
 
-### 6. YouTube fetch (desktop)
+### 7. YouTube fetch (desktop)
 
 - Search is keyless (`ytsearchN:` via yt-dlp).
 - Downloads are **opus stream copy** (never re-encode).
 - Files land in `<firstLibraryRoot>/YouTube Downloads/` (must be a scanned root).
 - Android YouTube fetch is not supported yet (no yt-dlp runtime).
 
-### 7. Demo fixtures (optional)
+### 8. Demo fixtures (optional)
 
 ```bash
 scripts/make-demo-fixtures.sh   # → ~/slotify-demo-music/
@@ -134,9 +159,12 @@ composeApp/
   src/commonTest/   # unit tests
   src/desktopMain/  # vlcj playback, yt-dlp, file picker, Floorp cookie reader
   src/androidMain/  # MediaPlayer playback, MediaMetadataRetriever scanner
+.mimocode/          # agent tooling manifests (npm install → node_modules)
 gradle/libs.versions.toml
 env.sh              # local toolchain (edit per machine)
 run.sh              # desktop launcher
+HANDOFF.md          # development handoff / rules / open work
+README.md           # fresh-machine setup
 ```
 
 ### Key versions
