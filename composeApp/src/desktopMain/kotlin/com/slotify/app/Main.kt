@@ -9,8 +9,6 @@ import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.ui.window.application
 import com.slotify.app.data.AppFiles
 import com.slotify.app.spotify.JsonFileTokenStorage
-import com.slotify.app.spotify.SPOTIFY_REDIRECT_URI
-import com.slotify.app.spotify.desktopAwaitPkceCode
 import com.slotify.app.state.AppState
 import com.slotify.app.state.createSpotifyPort
 import com.slotify.app.ui.App
@@ -79,10 +77,7 @@ fun main() = application {
                 job.cancel()
             }
         }
-        App(
-            state = state,
-            pkceAwait = { url -> desktopAwaitPkceCode(url, SPOTIFY_REDIRECT_URI) },
-        )
+        App(state = state)
     }
 }
 

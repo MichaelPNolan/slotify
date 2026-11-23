@@ -61,4 +61,31 @@ class SpotifyPublicSearchTest {
     fun emptyHtmlYieldsEmptyList() {
         assertTrue(parseDuckDuckGoPlaylistHits("<html></html>").isEmpty())
     }
+
+    @Test
+    fun parsesBingPlaylistAnchors() {
+        val html = """
+            <html><body>
+            <li class="b_algo">
+              <h2><a href="https://open.spotify.com/playlist/37i9dQZF1DZ06evO2FgIak?si=xyz">Yinglee Hits | Spotify</a></h2>
+            </li>
+            <li class="b_algo">
+              <h2><a href="https://open.spotify.com/playlist/6NQ6lsBqY3B327PbegJgl8">Thai Pop Mix</a></h2>
+            </li>
+            </body></html>
+        """.trimIndent()
+        val hits = parseBingPlaylistHits(html)
+        assertEquals(2, hits.size, hits.toString())
+        assertEquals("37i9dQZF1DZ06evO2FgIak", hits[0].id)
+        assertTrue(hits[0].title.contains("Yinglee"))
+        assertEquals("6NQ6lsBqY3B327PbegJgl8", hits[1].id)
+    }
+
+    @Test
+    fun bingFallsBackToBareUrls() {
+        val html = """See also https://open.spotify.com/playlist/6NQ6lsBqY3B327PbegJgl8 ok"""
+        val hits = parseBingPlaylistHits(html)
+        assertEquals(1, hits.size)
+        assertEquals("6NQ6lsBqY3B327PbegJgl8", hits[0].id)
+    }
 }

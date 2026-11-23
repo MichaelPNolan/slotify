@@ -101,12 +101,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val state = rememberAppState()
-            App(
-                state = state,
-                pkceAwait = { _ ->
-                    throw IllegalStateException("Browser sign-in not available on Android yet — use the cookie method")
-                },
-            )
+            App(state = state)
         }
     }
 
