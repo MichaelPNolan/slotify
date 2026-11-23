@@ -1,7 +1,9 @@
 package com.slotify.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,13 +34,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.slotify.app.playback.PlaybackMode
+import com.slotify.app.playback.isArtistMode
 import com.slotify.app.state.AppState
 
 @Composable
 fun PlayerBar(state: AppState) {
     val nowPlaying by state.nowPlaying.collectAsState()
     val snapshot by state.player.snapshot.collectAsState()
-    val shuffle by state.shuffleEnabled.collectAsState()
+    val playbackMode by state.playbackMode.collectAsState()
     val now = nowPlaying ?: return
 
     var seekValue by remember { mutableStateOf<Float?>(null) }
@@ -85,16 +90,34 @@ fun PlayerBar(state: AppState) {
             }
             Spacer(Modifier.width(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                IconButton(onClick = { state.setShuffle(!shuffle) }) {
-                    Icon(
-                        Icons.Default.Shuffle,
-                        contentDescription = if (shuffle) "Shuffle on" else "Shuffle off",
-                        tint = if (shuffle) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
+                IconButton(onClick = { state.cyclePlaybackMode() }) {
+                    Box {
+                        Icon(
+                            Icons.Default.Shuffle,
+                            contentDescription = when (playbackMode) {
+                                PlaybackMode.LINEAR -> "Mode: linear"
+                                PlaybackMode.SHUFFLE -> "Mode: shuffle"
+                                PlaybackMode.ARTIST_2 -> "Mode: artist shuffle, 2 per artist"
+                                PlaybackMode.ARTIST_ALL -> "Mode: artist shuffle, all per artist"
+                            },
+                            tint = if (playbackMode == PlaybackMode.LINEAR) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
+                        )
+                        if (playbackMode.isArtistMode()) {
+                            Text(
+                                text = if (playbackMode == PlaybackMode.ARTIST_2) "2" else "★",
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .offset(x = 6.dp, y = 5.dp),
+                            )
+                        }
+                    }
                 }
                 IconButton(onClick = { state.previous() }) {
                     Icon(Icons.Default.SkipPrevious, contentDescription = "Previous")
