@@ -2,6 +2,7 @@ package com.slotify.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -30,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,10 +61,17 @@ fun LibraryScreen(state: AppState) {
     val playerSnap by state.player.snapshot.collectAsState()
     val playlists by state.playlists.collectAsState()
     val settings by state.settings.collectAsState()
+    val followEnabled by state.libraryFollow.collectAsState()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val isDragged by listState.interactionSource.collectIsDraggedAsState()
     var query by remember { mutableStateOf("") }
     var addTarget by remember { mutableStateOf<LocalTrack?>(null) }
+
+    // User drag on the list releases auto-follow until the title is tapped again.
+    LaunchedEffect(isDragged) {
+        if (isDragged && followEnabled) state.releaseLibraryFollow()
+    }
 
     val filtered = remember(library, query) {
         if (query.isBlank()) library
@@ -72,6 +81,14 @@ fun LibraryScreen(state: AppState) {
                 it.displayTitle.lowercase().contains(q) || it.displayArtist.lowercase().contains(q)
             }
         }
+    }
+
+    // While following, recenter whenever the current song (or list) changes.
+    LaunchedEffect(followEnabled, nowPlaying?.path, filtered) {
+        if (!followEnabled) return@LaunchedEffect
+        val path = nowPlaying?.path ?: return@LaunchedEffect
+        val idx = filtered.indexOfFirst { it.filePath == path }
+        if (idx >= 0) listState.animateScrollToItem(idx)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {

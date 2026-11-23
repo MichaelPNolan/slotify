@@ -1,6 +1,7 @@
 package com.slotify.app.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -85,6 +86,9 @@ fun PlayerBar(state: AppState) {
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .clickable { state.engageLibraryFollow() }
+                        .semantics { contentDescription = "Follow current song in library" },
                 )
                 Text(
                     text = "${now.artist} · ${formatMs(position)} / ${formatMs(duration)}",

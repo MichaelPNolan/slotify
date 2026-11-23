@@ -228,6 +228,20 @@ class AppState(
     private val _playedKeys = MutableStateFlow<Set<String>>(emptySet())
     val playedKeys: StateFlow<Set<String>> = _playedKeys.asStateFlow()
 
+    /** Auto-scroll the Library to the playing song; a user drag releases it. */
+    private val _libraryFollow = MutableStateFlow(false)
+    val libraryFollow: StateFlow<Boolean> = _libraryFollow.asStateFlow()
+
+    /** Player-bar title tap: lock follow + (re)center on the current song. */
+    fun engageLibraryFollow() {
+        _libraryFollow.value = true
+    }
+
+    /** User dragged the library list — stop auto-following until re-engaged. */
+    fun releaseLibraryFollow() {
+        _libraryFollow.value = false
+    }
+
     /** Artist-mode state; (re)built lazily, dropped on source/mode changes. */
     private var artistSession: ArtistSession? = null
     /** Library snapshot used for artist items + LINEAR/SHUFFLE reorders. */
