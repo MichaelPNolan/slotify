@@ -88,4 +88,51 @@ class ArtistSessionTest {
         session.restartAround("Nobody")
         assertNotNull(session.next(emptySet()))
     }
+
+    // ── Collaboration grouping (Buddy Guy, Bonnie Raitt …) ───────────
+
+    @Test
+    fun primaryArtistTakesFirstBeforeCommaOrSemicolon() {
+        assertEquals("Buddy Guy", primaryArtistName("Buddy Guy, Bonnie Raitt"))
+        assertEquals("Buddy Guy", primaryArtistName("Buddy Guy; Bonnie Raitt"))
+        assertEquals("Buddy Guy", primaryArtistName("Buddy Guy & Bonnie Raitt"))
+        assertEquals("Queen", primaryArtistName("Queen"))
+        assertEquals(
+            listOf("Buddy Guy", "Bonnie Raitt"),
+            splitArtistList("Buddy Guy, Bonnie Raitt"),
+        )
+    }
+
+    @Test
+    fun collabBlockPicksAnotherSongByPrimaryArtistNeverTheSameTrack() {
+        val items = listOf(
+            ArtistSourceItem(
+                "collab",
+                primaryArtistName("Buddy Guy, Bonnie Raitt"),
+                listOf("Buddy Guy", "Bonnie Raitt"),
+            ),
+            ArtistSourceItem("bg-solo", "Buddy Guy", listOf("Buddy Guy")),
+            ArtistSourceItem("br-solo", "Bonnie Raitt", listOf("Bonnie Raitt")),
+        )
+        val session = ArtistSession(items, songsPerArtist = 2, random = Random(7))
+        val played = mutableSetOf("collab")
+        session.restartAround("Buddy Guy", listOf("Buddy Guy", "Bonnie Raitt"))
+        val next = assertNotNull(session.next(played))
+        assertEquals("bg-solo", next, "primary artist has another song → take it")
+        assertTrue(next !in played, "never the same song twice")
+    }
+
+    @Test
+    fun collabBlockFallsBackToPartnerWhenPrimaryHasNothingLeft() {
+        val items = listOf(
+            ArtistSourceItem("collab", "Buddy Guy", listOf("Buddy Guy", "Bonnie Raitt")),
+            ArtistSourceItem("br-solo", "Bonnie Raitt", listOf("Bonnie Raitt")),
+        )
+        val session = ArtistSession(items, songsPerArtist = 2, random = Random(8))
+        val played = mutableSetOf("collab")
+        session.restartAround("Buddy Guy", listOf("Buddy Guy", "Bonnie Raitt"))
+        val next = assertNotNull(session.next(played))
+        assertEquals("br-solo", next, "primary dry → partner artist")
+        assertTrue(next !in played, "never the same song twice")
+    }
 }
