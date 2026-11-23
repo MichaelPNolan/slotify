@@ -169,9 +169,20 @@ fun FindOnYoutubeDialog(
                 }
 
                 status?.let { s ->
+                    val failed = s.contains("failed", ignoreCase = true) ||
+                        s.contains("HTTP", ignoreCase = true) ||
+                        s.contains("Error", ignoreCase = true)
                     Column {
-                        Text(s, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                        if (s.contains("Download") || s.contains("Index")) {
+                        Text(
+                            s,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (failed) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
+                        )
+                        if (!failed && (s.contains("Download") || s.contains("Index"))) {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
                     }
@@ -219,11 +230,20 @@ fun FindOnYoutubeDialog(
                         .heightIn(max = 280.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
+                    // Block only while a download/index is in flight — failures
+                    // leave status set so the error stays visible, but must not
+                    // disable every result forever.
+                    val statusNow = status
+                    val busy = statusNow != null &&
+                        !statusNow.contains("failed", ignoreCase = true) &&
+                        !statusNow.startsWith("Done") &&
+                        !statusNow.startsWith("Saved") &&
+                        !statusNow.startsWith("HTTP")
                     items(results, key = { it.result.videoId }) { scored ->
                         HorizontalDivider()
                         ResultRow(
                             scored = scored,
-                            enabled = status == null,
+                            enabled = !busy && !searching,
                             onClick = {
                                 scope.launch {
                                     state.fetchYoutube(scored.result, playlistId, remoteTrack = track)

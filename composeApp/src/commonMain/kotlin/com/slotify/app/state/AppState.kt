@@ -17,6 +17,8 @@ import com.slotify.app.model.ResolvedPlaylistTrack
 import com.slotify.app.model.RowMark
 import com.slotify.app.platform.pickAudioFile
 import com.slotify.app.platform.readBrowserSpDcCookie
+import com.slotify.app.platform.hasSharedMusicWriteAccess
+import com.slotify.app.platform.requestSharedMusicWriteAccess
 import com.slotify.app.playback.AudioPlayer
 import com.slotify.app.playback.PlayerEvent
 import com.slotify.app.playback.createAudioPlayer
@@ -290,48 +292,86 @@ class AppState(
     // ── YouTube fetch (unmatched tracks → local file) ────────────────
 
     /**
-     * Staging dir for raw YouTube downloads: `<OS music>/Slotify/downloads`.
-     * Ensures the managed root (and staging subdirs) exist and that the root
-     * is covered by a scanned library root. Final named files are promoted
-     * to the Slotify root; `downloads/` + `conversions/` are manually purgeable.
+     * Music folder from Settings (`libraryRoots` first entry), e.g. `/sdcard/Music`
+     * on the phone. Falls back to the platform default root.
      */
-    fun youtubeDownloadDir(): String {
-        val managed = com.slotify.app.data.defaultSlotifyMusicDir()
-        val roots = _settings.value.libraryRoots
-        val covered = roots.any { root ->
-            val r = root.trimEnd('/')
-            managed == r || managed.startsWith("$r/")
-        }
-        if (!covered) {
-            updateSettings { it.copy(libraryRoots = it.libraryRoots + managed) }
-        }
-        // Create managed root + staging layout (idempotent).
-        runCatching {
-            val root = java.io.File(managed)
-            root.mkdirs()
-            com.slotify.app.data.SLOTIFY_STAGING_DIRS.forEach { name ->
-                java.io.File(root, name).mkdirs()
-            }
-        }
-        return com.slotify.app.data.slotifyDownloadsDir(managed)
+    fun musicRootFromSettings(): String {
+        val fromSettings = _settings.value.libraryRoots
+            .map { it.trim().trimEnd('/') }
+            .filter { it.isNotEmpty() }
+            .firstOrNull()
+        if (fromSettings != null) return fromSettings
+        return com.slotify.app.data.defaultLibraryRoots()
+            .firstOrNull()?.trim()?.trimEnd('/')
+            ?: com.slotify.app.data.defaultSlotifyMusicDir().substringBeforeLast('/')
     }
 
     /**
-     * Move a finished download out of staging into the Slotify root under its
-     * final `Artist - Title.ext` name. Staging stays until the user purges it.
+     * Staging dir for raw YouTube downloads: `<settings music root>/downloads`
+     * (e.g. `/sdcard/Music/downloads` on the phone — **not** a hardcoded
+     * Slotify subfolder). Creates `downloads` if missing. Final files are
+     * promoted to the music root itself so the scanner finds them under the
+     * configured library root.
+     */
+    fun youtubeDownloadDir(): String {
+        val musicRoot = musicRootFromSettings()
+        val roots = _settings.value.libraryRoots
+        val covered = roots.any { root ->
+            val r = root.trimEnd('/')
+            musicRoot == r || musicRoot.startsWith("$r/")
+        }
+        if (!covered) {
+            updateSettings { it.copy(libraryRoots = it.libraryRoots + musicRoot) }
+        }
+
+        fun probe(dir: java.io.File): String? = runCatching {
+            if (!dir.isDirectory) dir.mkdirs()
+            if (!dir.isDirectory) return null
+            val f = java.io.File(dir, ".slotify-write-test")
+            f.writeText("ok")
+            f.delete()
+            dir.absolutePath
+        }.getOrNull()
+
+        val downloads = java.io.File(musicRoot, "downloads")
+        val candidates = listOf(
+            downloads,
+            // Scoped storage may block subdirs — fall back to the music root itself.
+            java.io.File(musicRoot),
+        )
+        candidates.firstNotNullOfOrNull { probe(it) }?.let { return it }
+
+        // EPERM / scoped storage: READ_MEDIA_AUDIO is not a write grant.
+        // Launch the system UI (All files access / WRITE_EXTERNAL_STORAGE).
+        if (!hasSharedMusicWriteAccess()) {
+            requestSharedMusicWriteAccess()
+            error(
+                "Storage write access needed for $musicRoot — enable “All files access” " +
+                    "for Slotify in the Settings page that just opened, then retry the download.",
+            )
+        }
+        error(
+            "Music folder not writable: $musicRoot. " +
+                "Allow All files access for Slotify (Settings → Apps → Slotify → Permissions), then retry.",
+        )
+    }
+
+    /**
+     * Move a finished download out of `<music>/downloads` into the music root
+     * under its final `Artist - Title.ext` name. Already at the root → no-op.
      */
     private fun promoteFromStaging(stagedPath: String): String {
-        val managed = com.slotify.app.data.defaultSlotifyMusicDir()
+        val musicRoot = musicRootFromSettings()
         val staged = java.io.File(stagedPath)
         if (!staged.isFile) return stagedPath
-        val downloads = java.io.File(com.slotify.app.data.slotifyDownloadsDir(managed))
-        val conversions = java.io.File(com.slotify.app.data.slotifyConversionsDir(managed))
+        val downloads = java.io.File(musicRoot, "downloads")
+        val conversions = java.io.File(musicRoot, "conversions")
         val inStaging = staged.parentFile?.let { p ->
             p.absolutePath == downloads.absolutePath || p.absolutePath == conversions.absolutePath
         } == true
         if (!inStaging) return staged.absolutePath
 
-        val dest = java.io.File(managed, staged.name)
+        val dest = java.io.File(musicRoot, staged.name)
         if (dest.absolutePath == staged.absolutePath) return staged.absolutePath
         if (dest.exists()) {
             // Same final name already present — keep staged copy as alternate take.
@@ -367,7 +407,13 @@ class AppState(
             _youtubeStatus.value = "Starting download…"
             val ok = downloadIndexAndPin(result, playlistId, remoteTrack)
             if (!ok) {
-                _youtubeStatus.value = null
+                // Keep the failure on youtubeStatus so the Find dialog shows it
+                // in-place — a snackbar alone renders behind the AlertDialog.
+                if (_youtubeStatus.value.isNullOrBlank() ||
+                    _youtubeStatus.value == "Starting download…"
+                ) {
+                    _youtubeStatus.value = "Download failed — see message"
+                }
                 return@launch
             }
             val rowMatched = playlistId?.let { id ->
@@ -381,13 +427,8 @@ class AppState(
                 playlistId != null -> "Saved to library — playlist row still unmatched"
                 else -> "Done — added to library"
             }
-            emit(
-                when {
-                    rowMatched -> "Added “${result.title}” to the playlist"
-                    else -> "Added “${result.title}” to the library"
-                },
-            )
             // Brief hold so the dialog can show Done, then re-enable picking.
+            // No snackbar here either — it would sit under the Find dialog.
             kotlinx.coroutines.delay(1_500)
             if (_youtubeStatus.value?.startsWith("Done") == true ||
                 _youtubeStatus.value?.startsWith("Saved") == true
@@ -504,7 +545,9 @@ class AppState(
                 baseName = preferredBase,
             ).let { promoteFromStaging(it) }
         }.getOrElse { e ->
-            emit("Download failed for “${result.title}”: ${e.message}")
+            val detail = e.message?.take(400) ?: e::class.java.simpleName
+            // Status only — a snackbar would render *behind* Find-on-YouTube.
+            _youtubeStatus.value = "Download failed: $detail"
             return false
         }
 
@@ -573,6 +616,10 @@ class AppState(
     /** Clear a finished YouTube status so the Find dialog can start another fetch. */
     fun clearYoutubeStatusIfIdle() {
         val s = _youtubeStatus.value ?: return
+        // Failures stay until the next search — user needs time to read them.
+        if (s.contains("failed", ignoreCase = true) || s.contains("HTTP", ignoreCase = true)) {
+            return
+        }
         val busy = s.contains("Download") || s.contains("Index") ||
             s.contains("Starting") || s.contains("Updating") ||
             s.contains("Searching") || s.contains("Batch") ||

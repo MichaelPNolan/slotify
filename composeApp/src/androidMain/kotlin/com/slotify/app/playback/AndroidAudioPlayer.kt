@@ -45,6 +45,9 @@ class AndroidAudioPlayer : AudioPlayer {
             )
             if (pendingPlay) {
                 player.start()
+                // Must flip isPlaying here — prepareAsync leaves it false, so the
+                // playlist Stop button never appeared until a second click.
+                _snapshot.value = _snapshot.value.copy(isPlaying = true)
             } else {
                 _snapshot.value = _snapshot.value.copy(isPlaying = false)
             }
@@ -81,28 +84,36 @@ class AndroidAudioPlayer : AudioPlayer {
                 }
                 else -> player.setDataSource(path)
             }
-            _snapshot.value = PlayerSnapshot(currentPath = path)
+            // Optimistic isPlaying so the UI shows Stop/Pause while prepare runs.
+            _snapshot.value = PlayerSnapshot(
+                currentPath = path,
+                isPlaying = pendingPlay,
+            )
             player.prepareAsync()
         }.onFailure { e ->
             val message = e.message ?: "Cannot open file"
-            _snapshot.value = _snapshot.value.copy(error = message)
+            _snapshot.value = _snapshot.value.copy(isPlaying = false, error = message)
             _events.tryEmit(PlayerEvent.Failed(message))
         }
     }
 
     override fun play() {
+        pendingPlay = true
         runCatching {
             player.start()
             _snapshot.value = _snapshot.value.copy(isPlaying = true)
             startPositionPolling()
+        }.onFailure {
+            // Still preparing — onPrepared will start() because pendingPlay is set.
+            _snapshot.value = _snapshot.value.copy(isPlaying = true)
         }
     }
 
     override fun pause() {
-        runCatching {
-            player.pause()
-            _snapshot.value = _snapshot.value.copy(isPlaying = false)
-        }
+        pendingPlay = false
+        runCatching { player.pause() }
+        _snapshot.value = _snapshot.value.copy(isPlaying = false)
+        stopPositionPolling()
     }
 
     override fun seekTo(positionMs: Long) {

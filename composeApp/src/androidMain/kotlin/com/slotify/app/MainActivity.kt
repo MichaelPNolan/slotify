@@ -14,9 +14,12 @@ import com.slotify.app.data.androidBaseDir
 import com.slotify.app.platform.OpenDocumentInMusic
 import com.slotify.app.platform.SafMusic
 import com.slotify.app.platform.audioFilePicker
+import com.slotify.app.platform.hasSharedMusicWriteAccess
 import com.slotify.app.platform.jsonFilePicker
+import com.slotify.app.platform.launchStorageAccessRequest
 import com.slotify.app.platform.resolvePickedAudioToPath
 import com.slotify.app.platform.setClipboardContext
+import com.slotify.app.platform.storageAccessRequestor
 import com.slotify.app.spotify.JsonFileTokenStorage
 import com.slotify.app.state.AppState
 import com.slotify.app.state.createSpotifyPort
@@ -33,6 +36,17 @@ class MainActivity : ComponentActivity() {
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* result surfaced by scanner errors */ }
+
+    /** WRITE_EXTERNAL_STORAGE on API ≤ 28 (legacy File writes). */
+    private val writePermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (!granted) {
+                android.util.Log.w(
+                    "SlotifyStorage",
+                    "WRITE_EXTERNAL_STORAGE denied — music folder File writes will fail",
+                )
+            }
+        }
 
     private var pendingJsonPick: CompletableDeferred<String?>? = null
     private var pendingAudioPick: CompletableDeferred<String?>? = null
@@ -67,9 +81,23 @@ class MainActivity : ComponentActivity() {
 
         jsonFilePicker = { awaitPlaylistJsonPick() }
         audioFilePicker = { awaitAudioFilePick() }
+        // YouTube download / promote need File write under the music folder.
+        storageAccessRequestor = {
+            runOnUiThread {
+                if (Build.VERSION.SDK_INT >= 30) {
+                    launchStorageAccessRequest(applicationContext)
+                } else if (!hasSharedMusicWriteAccess()) {
+                    writePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                }
+            }
+        }
 
         initYoutubeRuntime(applicationContext)
         requestAudioPermissionIfMissing()
+        // One-shot: if music folder isn’t writable yet, open All files access.
+        if (!hasSharedMusicWriteAccess()) {
+            storageAccessRequestor?.invoke()
+        }
 
         setContent {
             val state = rememberAppState()
@@ -93,6 +121,7 @@ class MainActivity : ComponentActivity() {
         appState = null
         jsonFilePicker = null
         audioFilePicker = null
+        storageAccessRequestor = null
         androidAppContext = null
         super.onDestroy()
     }

@@ -65,9 +65,22 @@ object ChaquopyYoutubeSource : YoutubeSource {
             val q = query.trim()
             if (q.isEmpty()) return@withContext emptyList()
             val mod = loadHelper()
-            val json = mod.callAttr("search", q, max).toString()
+            // Python returns a JSON *string* — never a list object (Chaquopy
+            // cannot convert a raw Python list into a Java List here).
+            val raw = runCatching { mod.callAttr("search", q, max) }
+                .getOrElse { e -> throw IllegalStateException(searchFailureMessage(q, e), e) }
+            // PyObject for a Python str → toString() is the JSON body.
+            val json = raw.toString()
+            if (json.isBlank()) return@withContext emptyList()
             parseSearchResults(json)
         }
+
+    private fun searchFailureMessage(query: String, e: Throwable): String {
+        val cause = generateSequence(e) { it.cause }.joinToString(" → ") {
+            it::class.java.simpleName + ": " + (it.message ?: "")
+        }
+        return "YouTube search failed for “$query”: $cause"
+    }
 
     override suspend fun download(
         result: YoutubeSearchResult,
@@ -81,6 +94,24 @@ object ChaquopyYoutubeSource : YoutubeSource {
 
         onProgress("Starting download…")
         val name = baseName?.takeIf { it.isNotBlank() } ?: preferredBaseName(result)
+        // targetDir comes from Settings music root (youtubeDownloadDir) —
+        // e.g. /sdcard/Music/downloads — not a hardcoded Slotify path.
+        android.util.Log.i("SlotifyYtDlp", "download → $targetDir ($name) url=${result.url}")
+        if (!dir.isDirectory && !dir.mkdirs()) {
+            throw IllegalStateException(
+                "Cannot create download directory (settings music folder?): $targetDir",
+            )
+        }
+        val probe = File(dir, ".slotify-write-test")
+        val canWrite = runCatching {
+            probe.writeText("ok"); probe.delete(); true
+        }.getOrDefault(false)
+        if (!canWrite) {
+            throw IllegalStateException(
+                "Download directory not writable: $targetDir — " +
+                    "grant Slotify “All files access” (the Settings page should have opened), then retry.",
+            )
+        }
         val mod = loadHelper()
 
         val progress = dev.ffmpegkit_maintained.ytdlp.DownloadProgressCallback { pct, eta, _ ->
@@ -93,13 +124,20 @@ object ChaquopyYoutubeSource : YoutubeSource {
             }
         }
 
-        val rawPath = mod.callAttr(
-            "download",
-            result.url,
-            dir.absolutePath,
-            name,
-            progress,
-        ).toString()
+        val rawPathObj = runCatching {
+            mod.callAttr(
+                "download",
+                result.url,
+                dir.absolutePath,
+                name,
+                progress,
+            )
+        }.getOrElse { e ->
+            throw IllegalStateException(downloadFailureMessage(e), e)
+        }
+        // Chaquopy: pass a Python str path (never convert lists on this edge).
+        val pyStr = Python.getInstance().getModule("builtins").callAttr("str", rawPathObj)
+        val rawPath = pyStr.toString()
         val raw = File(rawPath)
         if (!raw.isFile) {
             throw IllegalStateException("yt-dlp finished but produced no file in $targetDir")
@@ -114,6 +152,20 @@ object ChaquopyYoutubeSource : YoutubeSource {
         }
         onProgress("Saved ${saved.name}")
         saved.absolutePath
+    }
+
+    private fun downloadFailureMessage(e: Throwable): String {
+        val chain = generateSequence(e) { it.cause }
+            .map { it.message ?: it::class.java.simpleName }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString(" · ")
+        // Keep HTTP status visible — YouTube 403 is the common Android case.
+        val http = Regex("""HTTP Error \d+""").find(chain)?.value
+        return when {
+            http != null -> "yt-dlp $http — ${chain.take(300)}"
+            else -> "yt-dlp download failed: ${chain.take(300)}"
+        }
     }
 
     // ── Python helper (written once into app filesDir) ───────────────
@@ -132,8 +184,10 @@ object ChaquopyYoutubeSource : YoutubeSource {
         if (!file.exists() || file.readText() != source) {
             file.writeText(source)
             // Drop a stale import so the next getModule sees the new file.
+            // Stay on Python dict APIs — Chaquopy toJava(List) on sys.path
+            // throws TypeError: Cannot convert list object to java.util.list.
             val modules = py.getModule("sys").get("modules")!!
-            if (modules.containsKey("slotify_ytdlp")) {
+            if (modules.callAttr("__contains__", "slotify_ytdlp").toBoolean()) {
                 runCatching {
                     py.getModule("importlib").callAttr(
                         "reload",
@@ -142,10 +196,10 @@ object ChaquopyYoutubeSource : YoutubeSource {
                 }
             }
         }
+        // sys.path membership via Python `in` — no Java List conversion.
         val path = py.getModule("sys").get("path")!!
-        val entries = path.toJava(List::class.java)
         val dirPath = dir.absolutePath
-        if (entries.none { it.toString() == dirPath }) {
+        if (!path.callAttr("__contains__", dirPath).toBoolean()) {
             path.callAttr("insert", 0, dirPath)
         }
         val mod = py.getModule("slotify_ytdlp")
@@ -242,9 +296,21 @@ object ChaquopyYoutubeSource : YoutubeSource {
         val channel: String? = null,
     )
 
-    private fun parseSearchResults(body: String): List<YoutubeSearchResult> =
-        runCatching {
-            json.decodeFromString<List<Hit>>(body)
+    private fun parseSearchResults(body: String): List<YoutubeSearchResult> {
+        val trimmed = body.trim()
+        if (trimmed.isEmpty()) return emptyList()
+        // Helper may return {"error": "..."} — surface as empty (caller shows note).
+        if (trimmed.startsWith("{") && !trimmed.startsWith("[[")) {
+            runCatching {
+                val obj = json.parseToJsonElement(trimmed)
+                if (obj is kotlinx.serialization.json.JsonObject && obj.containsKey("error")) {
+                    android.util.Log.w("SlotifyYtDlp", "search error: ${obj["error"]}")
+                    return emptyList()
+                }
+            }
+        }
+        return runCatching {
+            json.decodeFromString<List<Hit>>(trimmed)
         }.getOrDefault(emptyList()).mapNotNull { h ->
             if (h.id.isBlank() || h.title.isNullOrBlank()) null
             else YoutubeSearchResult(
@@ -254,6 +320,7 @@ object ChaquopyYoutubeSource : YoutubeSource {
                 channel = h.channel,
             )
         }
+    }
 }
 
 /**
@@ -267,24 +334,34 @@ import os
 
 
 def search(query, max_n=8):
+    # Return a JSON *string* (never a Python list) for Chaquopy callAttr.
     import yt_dlp
+    n = max(1, min(int(max_n), 25))
     opts = {
         "quiet": True,
         "no_warnings": True,
         "extract_flat": True,
         "skip_download": True,
         "noplaylist": True,
-        "playlistend": int(max_n),
+        "playlistend": n,
     }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info("ytsearch%d:%s" % (int(max_n), str(query)), download=False)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info("ytsearch%d:%s" % (n, str(query)), download=False)
+    except Exception as e:
+        # Still a JSON string so Kotlin parse path stays uniform.
+        return json.dumps({"error": "%s: %s" % (type(e).__name__, e)})
     entries = (info or {}).get("entries") or []
     out = []
     for e in entries:
         if not e:
             continue
+        # flat entries may nest under 'url'/'id' only — keep defensive gets.
+        vid = e.get("id") or e.get("url") or ""
+        if isinstance(vid, str) and "watch?v=" in vid:
+            vid = vid.split("watch?v=")[-1].split("&")[0]
         out.append({
-            "id": e.get("id") or "",
+            "id": str(vid or ""),
             "title": e.get("title") or "",
             "duration": e.get("duration"),
             "channel": e.get("channel") or e.get("uploader"),
@@ -293,35 +370,76 @@ def search(query, max_n=8):
 
 
 def download(url, out_dir, base_name, progress_cb=None):
+    # out_dir is an absolute Android path (e.g. /sdcard/Music/Slotify/downloads).
+    # yt-dlp only needs normal filesystem write access there — not SAF.
     import yt_dlp
     os.makedirs(out_dir, exist_ok=True)
+    if not os.access(out_dir, os.W_OK):
+        raise RuntimeError("Not writable: %s (storage permission?)" % out_dir)
     outtmpl = os.path.join(out_dir, base_name + ".%(ext)s")
-    opts = {
-        # Prefer opus (251), then AAC (140) — stream download, no transcode here.
-        "format": "251/140/bestaudio",
-        "outtmpl": outtmpl,
-        "quiet": True,
-        "no_warnings": True,
-        "noprogress": True,
-        "noplaylist": True,
-        "retries": 3,
-    }
-    if progress_cb is not None:
-        def hook(d):
-            if d.get("status") != "downloading":
-                return
-            try:
-                pct_s = d.get("_percent_str") or "0%"
-                pct = float(str(pct_s).replace("%", "").strip() or 0)
-                eta = int(d.get("eta") or 0)
-                line = str(d.get("_default_template") or "")
-                progress_cb.onProgressUpdate(float(pct), int(eta), line)
-            except Exception:
-                pass
-        opts["progress_hooks"] = [hook]
 
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
+    # YouTube media URLs 403 without matching player-client / UA on some
+    # networks. Try known-good client sets before giving up (no re-encode).
+    client_attempts = [
+        ["android", "web"],
+        ["ios", "tv"],
+        ["web_safari", "mweb"],
+        [],  # yt-dlp default
+    ]
+    format_attempts = [
+        "251/140/bestaudio/best",
+        "bestaudio/best",
+    ]
+    last_err = None
+    for clients in client_attempts:
+        for fmt in format_attempts:
+            opts = {
+                "format": fmt,
+                "outtmpl": outtmpl,
+                "quiet": True,
+                "no_warnings": True,
+                "noprogress": True,
+                "noplaylist": True,
+                "retries": 2,
+                "fragment_retries": 3,
+                # Keep android app from looking like a blank UA.
+                "http_headers": {
+                    "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36",
+                    "Referer": "https://www.youtube.com/",
+                },
+            }
+            if clients:
+                opts["extractor_args"] = {"youtube": {"player_client": clients}}
+            if progress_cb is not None:
+                def hook(d, _cb=progress_cb):
+                    if d.get("status") != "downloading":
+                        return
+                    try:
+                        pct_s = d.get("_percent_str") or "0%"
+                        pct = float(str(pct_s).replace("%", "").strip() or 0)
+                        eta = int(d.get("eta") or 0)
+                        line = str(d.get("_default_template") or "")
+                        _cb.onProgressUpdate(float(pct), int(eta), line)
+                    except Exception:
+                        pass
+                opts["progress_hooks"] = [hook]
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    ydl.download([url])
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                msg = str(e)
+                # Only retry on auth/URL rejection — not on missing-file bugs.
+                if "403" not in msg and "401" not in msg and "Forbidden" not in msg:
+                    if "HTTP Error" not in msg:
+                        raise
+                continue
+        if last_err is None:
+            break
+    if last_err is not None:
+        raise RuntimeError("HTTP download failed after client retries: %s" % last_err)
 
     pattern = os.path.join(out_dir, base_name + ".*")
     matches = [
