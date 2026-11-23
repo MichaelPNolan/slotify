@@ -636,20 +636,19 @@ private fun MatchedRow(
                 )
             }
         }
-        if (match.isManual) {
-            SuggestionChip(
-                onClick = {
-                    state.unlinkTrackFile(playlistId, Matcher.trackKey(row.remote))
+        if (!match.isManual) {
+            ConfidenceChip(
+                confidence = match.confidence,
+                libraryMatch = isExistingLibrary,
+                onAccept = {
+                    // Tap % = accept this match: pin the current file (S10).
+                    state.linkTrackToFile(
+                        playlistId,
+                        Matcher.trackKey(row.remote),
+                        match.local.filePath,
+                    )
                 },
-                label = { Text("Linked") },
-                colors = SuggestionChipDefaults.suggestionChipColors(
-                    containerColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.18f),
-                    labelColor = MaterialTheme.colorScheme.tertiary,
-                ),
             )
-            Spacer(Modifier.width(4.dp))
-        } else {
-            ConfidenceChip(confidence = match.confidence, libraryMatch = isExistingLibrary)
             Spacer(Modifier.width(4.dp))
         }
         if (state.youtube.isSupported) {
@@ -678,7 +677,11 @@ private fun MatchedRow(
 }
 
 @Composable
-private fun ConfidenceChip(confidence: Double, libraryMatch: Boolean = false) {
+private fun ConfidenceChip(
+    confidence: Double,
+    libraryMatch: Boolean = false,
+    onAccept: () -> Unit = {},
+) {
     val percent = (confidence * 100).toInt()
     // Library matches use the amber secondary so they read differently from
     // confidence-only green/red chips on Slotify-sourced rows.
@@ -689,7 +692,7 @@ private fun ConfidenceChip(confidence: Double, libraryMatch: Boolean = false) {
         else -> Color(0xFFE57373)
     }
     SuggestionChip(
-        onClick = {},
+        onClick = onAccept,
         label = { Text("$percent%") },
         colors = SuggestionChipDefaults.suggestionChipColors(
             containerColor = color.copy(alpha = 0.18f),
