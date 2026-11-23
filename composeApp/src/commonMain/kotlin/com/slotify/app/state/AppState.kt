@@ -20,9 +20,15 @@ import com.slotify.app.platform.pickAudioFile
 import com.slotify.app.platform.readBrowserSpDcCookie
 import com.slotify.app.platform.hasSharedMusicWriteAccess
 import com.slotify.app.platform.requestSharedMusicWriteAccess
+import com.slotify.app.playback.ArtistSession
+import com.slotify.app.playback.ArtistSourceItem
 import com.slotify.app.playback.AudioPlayer
+import com.slotify.app.playback.PlaybackMode
 import com.slotify.app.playback.PlayerEvent
 import com.slotify.app.playback.createAudioPlayer
+import com.slotify.app.playback.cycle
+import com.slotify.app.playback.initialMode
+import com.slotify.app.playback.isArtistMode
 import com.slotify.app.spotify.parseSpotifyPlaylistId
 import com.slotify.app.spotify.PublicPlaylistHit
 import com.slotify.app.spotify.SpotifyPublicSearch
@@ -198,8 +204,21 @@ class AppState(
     val activePlaylistId: StateFlow<String?> = _activePlaylistId.asStateFlow()
 
     private val _shuffleEnabled = MutableStateFlow(false)
-    /** Shuffle without repeats until the playlist is exhausted (then reshuffle). */
+    /** Kept in sync with [playbackMode] (true when mode != LINEAR) for existing UI. */
     val shuffleEnabled: StateFlow<Boolean> = _shuffleEnabled.asStateFlow()
+
+    private val _playbackMode = MutableStateFlow(PlaybackMode.LINEAR)
+    /** Linear / Shuffle / Artist (2) / Artist (all) — drives queue order (S3). */
+    val playbackMode: StateFlow<PlaybackMode> = _playbackMode.asStateFlow()
+
+    /** Library paths played since launch / last confirmed reset — grey-out (S6). */
+    private val _playedKeys = MutableStateFlow<Set<String>>(emptySet())
+    val playedKeys: StateFlow<Set<String>> = _playedKeys.asStateFlow()
+
+    /** Artist-mode state; (re)built lazily, dropped on source/mode changes. */
+    private var artistSession: ArtistSession? = null
+    /** Library snapshot used for artist items + LINEAR/SHUFFLE reorders. */
+    private var librarySource: List<LocalTrack> = emptyList()
 
     private var playbackStore: PlaybackStore = repository.loadPlayback()
 
@@ -208,7 +227,8 @@ class AppState(
         if (_settings.value.libraryRoots.isEmpty()) {
             updateSettings { it.copy(libraryRoots = com.slotify.app.data.defaultLibraryRoots()) }
         }
-        _shuffleEnabled.value = playbackStore.shuffle
+        _playbackMode.value = playbackStore.initialMode()
+        _shuffleEnabled.value = _playbackMode.value != PlaybackMode.LINEAR
         _activePlaylistId.value = playbackStore.activePlaylistId
         scope.launch {
             player.events.collect { event ->
@@ -1676,11 +1696,12 @@ class AppState(
             )
         }
 
+        val mode = _playbackMode.value
         val orderedKeys: List<String> = when {
             savedProgress != null -> {
                 val existing = savedProgress.orderKeys.filter { it in keysToEntries }
                 val missing = keysToEntries.keys.filterNot { it in existing.toSet() }
-                if (_shuffleEnabled.value && missing.isNotEmpty()) {
+                if (mode == PlaybackMode.SHUFFLE && missing.isNotEmpty()) {
                     (existing + missing.shuffled())
                 } else {
                     existing + missing
@@ -1688,7 +1709,7 @@ class AppState(
             }
             else -> {
                 val all = playable.map { (_, row, _) -> Matcher.trackKey(row.remote) }
-                if (_shuffleEnabled.value) all.shuffled() else all
+                if (mode == PlaybackMode.SHUFFLE) all.shuffled() else all
             }
         }
         if (orderedKeys.isEmpty()) {
@@ -1696,58 +1717,130 @@ class AppState(
             return
         }
 
-        queue = orderedKeys.mapNotNull { keysToEntries[it] }
-        val startIndex = if (savedProgress != null) {
+        val fullQueue = orderedKeys.mapNotNull { keysToEntries[it] }
+        val resolvedIndex = if (savedProgress != null) {
             val key = savedProgress.orderKeys[savedProgress.orderIndex]
-            queue.indexOfFirst { it.trackKey == key }.takeIf { it >= 0 } ?: 0
+            fullQueue.indexOfFirst { it.trackKey == key }.takeIf { it >= 0 } ?: 0
         } else {
             val orig = playable.indexOfFirst { it.first >= fromRowIndex }
             val origKey = playable.getOrNull(orig)?.let { Matcher.trackKey(it.second.remote) }
-            origKey?.let { k -> queue.indexOfFirst { it.trackKey == k } }
-                ?.takeIf { it >= 0 } ?: 0
+            (origKey?.let { k -> fullQueue.indexOfFirst { it.trackKey == k } } ?: 0)
+                .takeIf { it >= 0 } ?: 0
+        }
+        artistSession = null
+        // ARTIST_* fresh start: queue is history only; picks append the future.
+        queue = if (mode.isArtistMode() && savedProgress == null) {
+            listOf(fullQueue[resolvedIndex.coerceIn(0, fullQueue.lastIndex)])
+        } else {
+            fullQueue
         }
         val startPos = savedProgress?.positionMs?.coerceAtLeast(0L) ?: 0L
         _activePlaylistId.value = playlistId
-        queueIndex = startIndex.coerceIn(0, queue.lastIndex)
+        queueIndex = if (mode.isArtistMode() && savedProgress == null) {
+            0
+        } else {
+            resolvedIndex.coerceIn(0, queue.lastIndex)
+        }
         playAt(queueIndex, seekToMs = startPos)
         persistPlaybackProgress()
     }
 
-    fun setShuffle(enabled: Boolean) {
-        _shuffleEnabled.value = enabled
-        playbackStore = playbackStore.copy(shuffle = enabled)
+    fun setShuffle(enabled: Boolean) =
+        applyMode(if (enabled) PlaybackMode.SHUFFLE else PlaybackMode.LINEAR)
+
+    /** Cycle Linear → Shuffle → Artist (2) → Artist (all); keeps the current song (S3). */
+    fun cyclePlaybackMode() = applyMode(_playbackMode.value.cycle())
+
+    private fun applyMode(next: PlaybackMode) {
+        _playbackMode.value = next
+        _shuffleEnabled.value = next != PlaybackMode.LINEAR
+        playbackStore = playbackStore.copy(shuffle = next != PlaybackMode.LINEAR, mode = next.name)
         scope.launch { repository.savePlayback(playbackStore) }
-        val plId = _activePlaylistId.value ?: return
+        if (queue.isEmpty()) return
+        if (next.isArtistMode()) {
+            artistSession = null
+            restartArtistSessionAroundCurrent()
+            return
+        }
+        // LINEAR / SHUFFLE: rebuild the order around the current song.
         val currentKey = queue.getOrNull(queueIndex)?.trackKey
-        val playlist = _playlists.value.find { it.id == plId } ?: return
-        val keys = playlist.resolvedTracks
-            .filter {
-                it.mark != RowMark.SKIP && it.mark != RowMark.DELETE && it.match != null
-            }
-            .map { Matcher.trackKey(it.remote) }
-        if (keys.isEmpty()) return
-        val reordered = if (enabled) {
-            val rest = keys.filter { it != currentKey }.shuffled()
+        val sourceKeys = currentSourceKeys()
+        if (sourceKeys.isEmpty()) return
+        val reordered = if (next == PlaybackMode.SHUFFLE) {
+            val rest = sourceKeys.filter { it != currentKey }.shuffled()
             if (currentKey != null) listOf(currentKey) + rest else rest
         } else {
-            val seq = keys
-            if (currentKey != null && currentKey in seq) {
-                val i = seq.indexOf(currentKey)
-                seq.drop(i) + seq.take(i)
-            } else {
-                seq
-            }
+            sourceKeys
         }
-        val byKey = queue.associateBy { it.trackKey }
-        val newQueue = reordered.mapNotNull { byKey[it] }
+        val newQueue = reordered.mapNotNull { k -> queue.find { it.trackKey == k } ?: queueEntryForKey(k) }
         if (newQueue.isEmpty()) return
         queue = newQueue
-        queueIndex = if (currentKey != null) {
-            newQueue.indexOfFirst { it.trackKey == currentKey }.takeIf { it >= 0 } ?: 0
-        } else {
-            0
-        }
+        queueIndex = currentKey?.let { k ->
+            newQueue.indexOfFirst { it.trackKey == k }.takeIf { i -> i >= 0 }
+        } ?: 0
         persistPlaybackProgress()
+    }
+
+    /** Full playable source keys for the active playlist, or the library snapshot. */
+    private fun currentSourceKeys(): List<String> = _activePlaylistId.value
+        ?.let { id -> _playlists.value.find { it.id == id } }
+        ?.resolvedTracks
+        ?.filter { it.mark != RowMark.SKIP && it.mark != RowMark.DELETE && it.match != null }
+        ?.map { Matcher.trackKey(it.remote) }
+        ?: librarySource.map { "lib:${it.filePath}" }
+
+    /** Build a queue entry for a source key that is not in the current queue. */
+    private fun queueEntryForKey(key: String): QueueEntry? {
+        val plId = _activePlaylistId.value
+        if (plId != null) {
+            val row = _playlists.value.find { it.id == plId }
+                ?.resolvedTracks?.find { Matcher.trackKey(it.remote) == key } ?: return null
+            val match = row.match ?: return null
+            return QueueEntry(
+                path = com.slotify.app.data.resolveSymlinkTarget(match.local.filePath),
+                title = row.remote.name,
+                artist = row.remote.artistNames.ifBlank { match.local.displayArtist },
+                trackKey = key,
+            )
+        }
+        val local = librarySource.find { "lib:${it.filePath}" == key } ?: return null
+        return QueueEntry(
+            path = com.slotify.app.data.resolveSymlinkTarget(local.filePath),
+            title = local.displayTitle,
+            artist = local.displayArtist,
+            trackKey = key,
+        )
+    }
+
+    private fun artistItems(): List<ArtistSourceItem> {
+        val plId = _activePlaylistId.value
+        if (plId != null) {
+            val rows = _playlists.value.find { it.id == plId }?.resolvedTracks ?: return emptyList()
+            return rows.mapNotNull { row ->
+                if (row.mark == RowMark.SKIP || row.mark == RowMark.DELETE || row.match == null) {
+                    return@mapNotNull null
+                }
+                val artist = row.remote.primaryArtist.ifBlank { row.match.local.displayArtist }
+                ArtistSourceItem(Matcher.trackKey(row.remote), artist)
+            }
+        }
+        return librarySource.map {
+            ArtistSourceItem("lib:${it.filePath}", it.displayArtist)
+        }
+    }
+
+    private fun ensureArtistSession(): ArtistSession? {
+        artistSession?.let { return it }
+        val items = artistItems().takeIf { it.isNotEmpty() } ?: return null
+        val per = if (_playbackMode.value == PlaybackMode.ARTIST_2) 2 else Int.MAX_VALUE
+        return ArtistSession(items, per).also { artistSession = it }
+    }
+
+    private fun restartArtistSessionAroundCurrent() {
+        val current = queue.getOrNull(queueIndex) ?: return
+        val session = ensureArtistSession() ?: return
+        val artist = artistItems().find { it.key == current.trackKey }?.artist ?: return
+        session.restartAround(artist)
     }
 
     /** Snapshot index + position into [playbackStore] and write playback.json. */
@@ -1763,7 +1856,8 @@ class AppState(
         )
         playbackStore = playbackStore.copy(
             activePlaylistId = plId,
-            shuffle = _shuffleEnabled.value,
+            shuffle = _playbackMode.value != PlaybackMode.LINEAR,
+            mode = _playbackMode.value.name,
             byPlaylist = playbackStore.byPlaylist + (plId to progress),
         )
         scope.launch { repository.savePlayback(playbackStore) }
@@ -1774,7 +1868,16 @@ class AppState(
         if (tracks.isEmpty()) return
         persistPlaybackProgress()
         _activePlaylistId.value = null
-        queue = tracks.map {
+        val mode = _playbackMode.value
+        val startKey = tracks.getOrNull(fromIndex)?.let { "lib:${it.filePath}" }
+        val playable = tracks.filter { it.mark == null }
+        if (playable.isEmpty()) {
+            emit("Every row here is marked skip or delete")
+            return
+        }
+        librarySource = playable
+        artistSession = null
+        val entries = playable.map {
             QueueEntry(
                 path = com.slotify.app.data.resolveSymlinkTarget(it.filePath),
                 title = it.displayTitle,
@@ -1782,7 +1885,15 @@ class AppState(
                 trackKey = "lib:${it.filePath}",
             )
         }
-        playAt(fromIndex.coerceIn(0, queue.lastIndex))
+        val startEntry = entries.find { it.trackKey == startKey } ?: entries.first()
+        queue = when {
+            mode.isArtistMode() -> listOf(startEntry)
+            mode == PlaybackMode.SHUFFLE ->
+                listOf(startEntry) + entries.filter { it.trackKey != startEntry.trackKey }.shuffled()
+            else -> entries
+        }
+        queueIndex = queue.indexOfFirst { it.trackKey == startEntry.trackKey }.coerceAtLeast(0)
+        playAt(queueIndex)
     }
 
     fun next() = advance(1, auto = false)
@@ -1812,8 +1923,41 @@ class AppState(
 
     private fun advance(delta: Int, auto: Boolean) {
         if (queue.isEmpty()) return
+        val mode = _playbackMode.value
+        if (mode.isArtistMode() && delta > 0) {
+            if (queueIndex < queue.lastIndex) {
+                playAt(queueIndex + 1)
+                persistPlaybackProgress()
+                return
+            }
+            // End of history — ask the artist session for the next pick (S5).
+            val session = ensureArtistSession()
+            var key = session?.next(_playedKeys.value)
+            if (key == null && session != null) {
+                // Pass complete: new pass + clear played, then retry once.
+                session.reshuffle()
+                _playedKeys.value = emptySet()
+                emit("Artist pass complete — starting a new pass")
+                key = session.next(_playedKeys.value)
+            }
+            if (key == null) {
+                persistPlaybackProgress()
+                player.pause()
+                return
+            }
+            val entry = queue.find { it.trackKey == key } ?: queueEntryForKey(key)
+            if (entry == null) {
+                persistPlaybackProgress()
+                player.pause()
+                return
+            }
+            queue = queue + entry
+            playAt(queue.lastIndex)
+            persistPlaybackProgress()
+            return
+        }
         val target = queueIndex + delta
-        if (auto && target > queue.lastIndex && _shuffleEnabled.value) {
+        if (auto && target > queue.lastIndex && mode == PlaybackMode.SHUFFLE) {
             // Exhausted this shuffle cycle — reshuffle all tracks for a new pass.
             val byKey = queue.associateBy { it.trackKey }
             val newQueue = queue.map { it.trackKey }.shuffled().mapNotNull { byKey[it] }
@@ -1837,9 +1981,22 @@ class AppState(
         persistPlaybackProgress()
     }
 
+    /** Record the played library path (playlist rows map via their match) — S6. */
+    private fun markPlayed(entry: QueueEntry) {
+        val path = when {
+            entry.trackKey.startsWith("lib:") -> entry.trackKey.removePrefix("lib:")
+            else -> _playlists.value.find { it.id == _activePlaylistId.value }
+                ?.resolvedTracks
+                ?.find { Matcher.trackKey(it.remote) == entry.trackKey }
+                ?.match?.local?.filePath
+        }
+        if (path != null) _playedKeys.value = _playedKeys.value + path
+    }
+
     private fun playAt(index: Int, seekToMs: Long = 0L) {
         val entry = queue.getOrNull(index) ?: return
         queueIndex = index
+        markPlayed(entry)
         _nowPlaying.value = NowPlaying(entry.title, entry.artist, entry.path)
         player.load(entry.path, startPaused = seekToMs > 0)
         if (seekToMs > 0) {
