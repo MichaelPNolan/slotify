@@ -21,6 +21,8 @@ import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Restore
@@ -80,6 +82,8 @@ fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
     var clipboardHint by rememberSaveable { mutableStateOf<String?>(null) }
     var showTrash by rememberSaveable { mutableStateOf(false) }
     var deleteTrashAudio by rememberSaveable { mutableStateOf(false) }
+    // Collapsed by default: the page is just the playlist list until asked.
+    var showGetPlaylist by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val trashOnlyCount = remember(trashed, allPlaylists) {
         if (trashed.isEmpty()) 0 else state.trashOnlyAudioPaths().size
@@ -95,194 +99,206 @@ fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
             Icon(Icons.AutoMirrored.Filled.PlaylistPlay, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(8.dp))
             Text("Playlists", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-            if (playlists.isNotEmpty()) {
-                FilledTonalButton(onClick = { state.importFromSpotify() }) {
-                    Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Refresh")
-                }
-            }
-        }
-
-        // Paste a playlist URL → import that playlist only.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            OutlinedTextField(
-                value = playlistUrl,
-                onValueChange = { playlistUrl = it },
-                modifier = Modifier.weight(1f),
-                label = { Text("Playlist URL") },
-                placeholder = { Text("https://open.spotify.com/playlist/…") },
-                singleLine = true,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
-                ),
-                supportingText = {
-                    val hint = clipboardHint
-                    when {
-                        hint != null -> Text(hint, color = MaterialTheme.colorScheme.error)
-                        spotifyStatus == SpotifyStatus.CONNECTED ->
-                            Text("Paste (button or Ctrl+V) · Import adds just this playlist")
-                        else ->
-                            Text("Public playlists work without login; private ones use your Floorp session")
-                    }
-                },
-            )
-            Spacer(Modifier.width(4.dp))
-            // Explicit paste — some desktop IMEs / focus states swallow Ctrl+V.
-            IconButton(
-                onClick = {
-                    scope.launch {
-                        val clip = readClipboardText()
-                        when {
-                            clip.isNullOrEmpty() -> {
-                                clipboardHint = "Clipboard is empty or unreadable — copy a URL first"
-                            }
-                            else -> {
-                                playlistUrl = clip
-                                clipboardHint = null
-                            }
-                        }
-                    }
-                },
-            ) {
+            // Reveals URL import and public search.
+            FilledTonalButton(onClick = { showGetPlaylist = !showGetPlaylist }) {
+                Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(if (showGetPlaylist) "Hide" else "Get Playlist")
+                Spacer(Modifier.width(4.dp))
                 Icon(
-                    Icons.Default.ContentPaste,
-                    contentDescription = "Paste from clipboard",
-                    tint = MaterialTheme.colorScheme.primary,
+                    if (showGetPlaylist) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
                 )
             }
-            Spacer(Modifier.width(4.dp))
-            FilledTonalButton(
-                onClick = {
-                    state.importFromSpotifyUrl(playlistUrl.trim())
-                },
-                enabled = playlistUrl.isNotBlank() &&
-                    (importStatus == null || !(importStatus!!.startsWith("Importing") || importStatus!!.startsWith("Fetching") || importStatus!!.startsWith("Connecting") || importStatus!!.startsWith("Starting"))),
-            ) {
-                Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Import")
-            }
         }
 
-        // Search public Spotify playlists (artist / genre / …) → pick → import.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            OutlinedTextField(
-                value = publicQuery,
-                onValueChange = { publicQuery = it },
-                modifier = Modifier.weight(1f),
-                label = { Text("Search public playlists") },
-                placeholder = { Text("Artist name, genre…") },
-                singleLine = true,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    imeAction = androidx.compose.ui.text.input.ImeAction.Search,
-                ),
-                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                    onSearch = {
-                        if (!searchRunning && publicQuery.isNotBlank()) {
-                            state.searchPublicPlaylists(publicQuery)
-                        }
-                    },
-                ),
-                supportingText = {
-                    searchStatus?.let {
-                        Text(it, color = MaterialTheme.colorScheme.primary)
-                    }
-                },
-            )
-            Spacer(Modifier.width(4.dp))
-            FilledTonalButton(
-                onClick = { state.searchPublicPlaylists(publicQuery) },
-                enabled = !searchRunning && publicQuery.isNotBlank(),
-            ) {
-                Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Search")
-            }
-        }
-        if (searchRunning) {
-            LinearProgressIndicator(
+        if (showGetPlaylist) {
+            // Paste a playlist URL → import that playlist only.
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp),
-            )
-        }
-        if (searchHits.isNotEmpty()) {
-            Column(
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = playlistUrl,
+                    onValueChange = { playlistUrl = it },
+                    modifier = Modifier.weight(1f),
+                    label = { Text("Playlist URL") },
+                    placeholder = { Text("https://open.spotify.com/playlist/…") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+                    ),
+                    supportingText = {
+                        val hint = clipboardHint
+                        when {
+                            hint != null -> Text(hint, color = MaterialTheme.colorScheme.error)
+                            spotifyStatus == SpotifyStatus.CONNECTED ->
+                                Text("Paste (button or Ctrl+V) · Import adds just this playlist")
+                            else ->
+                                Text("Public playlists work without login; private ones use your Floorp session")
+                        }
+                    },
+                )
+                Spacer(Modifier.width(4.dp))
+                // Explicit paste — some desktop IMEs / focus states swallow Ctrl+V.
+                IconButton(
+                    onClick = {
+                        scope.launch {
+                            val clip = readClipboardText()
+                            when {
+                                clip.isNullOrEmpty() -> {
+                                    clipboardHint = "Clipboard is empty or unreadable — copy a URL first"
+                                }
+                                else -> {
+                                    playlistUrl = clip
+                                    clipboardHint = null
+                                }
+                            }
+                        }
+                    },
+                ) {
+                    Icon(
+                        Icons.Default.ContentPaste,
+                        contentDescription = "Paste from clipboard",
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
+                FilledTonalButton(
+                    onClick = {
+                        state.importFromSpotifyUrl(playlistUrl.trim())
+                    },
+                    enabled = playlistUrl.isNotBlank() &&
+                        (importStatus == null || !(importStatus!!.startsWith("Importing") || importStatus!!.startsWith("Fetching") || importStatus!!.startsWith("Connecting") || importStatus!!.startsWith("Starting"))),
+                ) {
+                    Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Import")
+                }
+            }
+
+            // Search public Spotify playlists (artist / genre / …) → pick → import.
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                searchHits.forEach { hit ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = hit.title,
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = hit.spotifyUrl,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                OutlinedTextField(
+                    value = publicQuery,
+                    onValueChange = { publicQuery = it },
+                    modifier = Modifier.weight(1f),
+                    label = { Text("Search public playlists") },
+                    placeholder = { Text("Artist name, genre…") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                        onSearch = {
+                            if (publicQuery.isNotBlank()) {
+                                // Always allowed — cancels an in-flight run and restarts.
+                                state.searchPublicPlaylists(publicQuery)
+                            }
+                        },
+                    ),
+                    supportingText = {
+                        searchStatus?.let {
+                            Text(it, color = MaterialTheme.colorScheme.primary)
                         }
-                        Spacer(Modifier.width(8.dp))
-                        TextButton(
-                            onClick = { state.importFromSpotifyUrl(hit.url) },
-                            enabled = !searchRunning,
-                        ) {
-                            Text("Import")
-                        }
-                    }
-                }
-                TextButton(onClick = { state.clearPlaylistSearch() }) {
-                    Text("Clear results")
+                    },
+                )
+                Spacer(Modifier.width(4.dp))
+                // Stay enabled while searching: another press cancels + uses new text.
+                FilledTonalButton(
+                    onClick = { state.searchPublicPlaylists(publicQuery) },
+                    enabled = publicQuery.isNotBlank(),
+                ) {
+                    Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (searchRunning) "Search…" else "Search")
                 }
             }
-        }
-
-        val status = importStatus
-        when {
-            status != null -> {
-                Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                    Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                    if (status.startsWith("Importing") || status.startsWith("Starting")) {
-                        Spacer(Modifier.height(4.dp))
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    }
-                }
-            }
-
-            spotifyStatus == SpotifyStatus.CONNECTED -> {
-                Text(
-                    text = "Connected as ${spotifyName ?: "you"}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp),
+            if (searchRunning) {
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
                 )
             }
-
-            playlists.isEmpty() -> {
-                EmptyPlaylistsHint(onOpenSettings = onOpenSettings, onImport = { state.importFromSpotify() })
+            if (searchHits.isNotEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    searchHits.forEach { hit ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = hit.title,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = hit.spotifyUrl,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            TextButton(
+                                onClick = { state.importFromSpotifyUrl(hit.url) },
+                                enabled = !searchRunning,
+                            ) {
+                                Text("Import")
+                            }
+                        }
+                    }
+                    TextButton(onClick = { state.clearPlaylistSearch() }) {
+                        Text("Clear results")
+                    }
+                }
             }
+
+            val status = importStatus
+            when {
+                status != null -> {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                        Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                        if (status.startsWith("Importing") || status.startsWith("Starting")) {
+                            Spacer(Modifier.height(4.dp))
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+
+                spotifyStatus == SpotifyStatus.CONNECTED -> {
+                    Text(
+                        text = "Connected as ${spotifyName ?: "you"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
+            }
+        } else if (playlists.isEmpty()) {
+            // Still need a path when the panel is collapsed and the library is empty.
+            EmptyPlaylistsHint(
+                onOpenSettings = onOpenSettings,
+                onImport = { showGetPlaylist = true },
+                onShowGetPlaylist = { showGetPlaylist = true },
+            )
         }
 
         // Soft-delete: mark rows in the list, then move to trash.
@@ -434,13 +450,13 @@ fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
                     }
                 }
             }
-        } else if (trashed.isEmpty()) {
-            // Empty hint already shown above when playlists empty.
+        } else if (trashed.isEmpty() && showGetPlaylist) {
+            // Empty hint already shown above when panel collapsed and empty.
         }
 
         // ── Trash ────────────────────────────────────────────────────
-        if (trashed.isNotEmpty() || showTrash) {
-            HorizontalDivider(
+        // Always visible (even at 0) so the view is discoverable on all devices.
+        HorizontalDivider(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
             Row(
@@ -460,6 +476,14 @@ fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
                 }
             }
             if (showTrash) {
+                if (trashed.isEmpty()) {
+                    Text(
+                        text = "Trash is empty — deleted playlists will appear here.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
                 Text(
                     text = "Deleted playlists stay here until you empty the trash.",
                     style = MaterialTheme.typography.bodySmall,
@@ -534,12 +558,15 @@ fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
                     }
                 }
             }
-        }
     }
 }
 
 @Composable
-private fun EmptyPlaylistsHint(onOpenSettings: () -> Unit, onImport: () -> Unit) {
+private fun EmptyPlaylistsHint(
+    onOpenSettings: () -> Unit,
+    onImport: () -> Unit,
+    onShowGetPlaylist: () -> Unit,
+) {
     Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(
@@ -550,7 +577,7 @@ private fun EmptyPlaylistsHint(onOpenSettings: () -> Unit, onImport: () -> Unit)
             )
             Text("No playlists yet", style = MaterialTheme.typography.titleLarge)
             Text(
-                text = "1. Connect your Spotify account in Settings\n" +
+                text = "1. Get a playlist — paste its URL or search public playlists\n" +
                     "2. Add folders that hold your music\n" +
                     "3. Scan the library — playlists match automatically",
                 style = MaterialTheme.typography.bodyMedium,
@@ -558,7 +585,8 @@ private fun EmptyPlaylistsHint(onOpenSettings: () -> Unit, onImport: () -> Unit)
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onOpenSettings) { Text("Open Settings") }
-                TextButton(onClick = onImport) { Text("Import now") }
+                TextButton(onClick = onShowGetPlaylist) { Text("Get Playlist") }
+                TextButton(onClick = onImport) { Text("Show import") }
             }
         }
     }

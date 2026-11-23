@@ -96,16 +96,6 @@ fun SettingsScreen(state: AppState) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                OutlinedButton(
-                    onClick = { state.connectWithBrowserSession() },
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Check browser session cookie") }
-                Text(
-                    text = "Reads sp_dc from Floorp/Firefox on this machine (desktop). " +
-                        "Only private playlist imports need it; public playlists never do.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
 
