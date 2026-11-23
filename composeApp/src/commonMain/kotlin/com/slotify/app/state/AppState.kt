@@ -15,6 +15,7 @@ import com.slotify.app.model.LocalTrack
 import com.slotify.app.model.RemoteTrack
 import com.slotify.app.model.ResolvedPlaylistTrack
 import com.slotify.app.model.RowMark
+import com.slotify.app.model.cycleMark
 import com.slotify.app.platform.pickAudioFile
 import com.slotify.app.platform.readBrowserSpDcCookie
 import com.slotify.app.platform.hasSharedMusicWriteAccess
@@ -32,9 +33,10 @@ import com.slotify.app.youtube.YoutubeSource
 import com.slotify.app.youtube.createYoutubeSource
 import com.slotify.app.youtube.preferredDownloadBaseName
 import com.slotify.app.youtube.searchWithFallbacks
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -44,7 +46,9 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class Tab { PLAYLISTS, LIBRARY, SETTINGS }
 
@@ -171,6 +175,9 @@ class AppState(
     private val _playlistSearchRunning = MutableStateFlow(false)
     val playlistSearchRunning: StateFlow<Boolean> = _playlistSearchRunning.asStateFlow()
 
+    /** In-flight public search — cancelled when the user presses Search again. */
+    private var playlistSearchJob: Job? = null
+
     private val _nowPlaying = MutableStateFlow<NowPlaying?>(null)
     val nowPlaying: StateFlow<NowPlaying?> = _nowPlaying.asStateFlow()
 
@@ -276,13 +283,15 @@ class AppState(
             scanner.scan(roots) { line -> _scanStatus.value = line }
         }
         result.onSuccess { tracks ->
-            _library.value = tracks
-            repository.saveLibrary(tracks)
-            _scanStatus.value = "Indexed ${tracks.size} file(s)"
+            val priorMarks = _library.value.associate { it.filePath to it.mark }
+            val marked = tracks.map { t -> priorMarks[t.filePath]?.let { m -> t.copy(mark = m) } ?: t }
+            _library.value = marked
+            repository.saveLibrary(marked)
+            _scanStatus.value = "Indexed ${marked.size} file(s)"
             if (_playlists.value.isNotEmpty()) {
                 _scanStatus.value = "Matching ${_playlists.value.size} playlist(s)…"
                 rematchAll()
-                _scanStatus.value = "Indexed ${tracks.size} file(s) · matches refreshed"
+                _scanStatus.value = "Indexed ${marked.size} file(s) · matches refreshed"
             }
         }.onFailure { e ->
             _scanStatus.value = "Scan failed: ${e.message}"
@@ -739,39 +748,62 @@ class AppState(
     /**
      * Search public Spotify playlists by free-text (artist, genre, …).
      * Results are metadata only; pick one to import via the embed path.
+     *
+     * Pressing Search while a run is in progress **cancels** the old job and
+     * starts over with the current field text (button never greys out).
      */
     fun searchPublicPlaylists(query: String) {
         val q = query.trim()
         if (q.isEmpty()) {
+            playlistSearchJob?.cancel()
+            playlistSearchJob = null
             _playlistSearchResults.value = emptyList()
             _playlistSearchStatus.value = null
+            _playlistSearchRunning.value = false
             return
         }
-        if (_playlistSearchRunning.value) return
-        scope.launch {
+        // Supersede any in-flight search with the new query.
+        playlistSearchJob?.cancel()
+        val job = scope.launch {
             _playlistSearchRunning.value = true
             _playlistSearchStatus.value = "Searching public playlists for “$q”…"
-            val outcome = runCatching {
-                SpotifyPublicSearch().searchPlaylists(q, limit = 12)
-            }
-            _playlistSearchRunning.value = false
-            outcome.onSuccess { hits ->
+            try {
+                val hits = SpotifyPublicSearch().searchPlaylists(q, limit = 12)
+                if (!isActive) return@launch
                 _playlistSearchResults.value = hits
                 _playlistSearchStatus.value = if (hits.isEmpty()) {
                     "No public playlists found for “$q”"
                 } else {
                     "${hits.size} public playlist(s) — tap Import"
                 }
-            }.onFailure { e ->
+            } catch (e: CancellationException) {
+                // Replaced by a newer Search press — leave UI to the new job.
+                throw e
+            } catch (e: Throwable) {
+                if (!isActive) return@launch
+                val msg = e.message ?: e::class.simpleName ?: "unknown error"
                 _playlistSearchResults.value = emptyList()
-                _playlistSearchStatus.value = "Search failed: ${e.message}"
+                _playlistSearchStatus.value = when {
+                    msg.contains("timeout", ignoreCase = true) ||
+                        msg.contains("timed out", ignoreCase = true) ->
+                        "Search timed out — press Search to retry “$q”"
+                    else -> "Search failed: $msg"
+                }
+            } finally {
+                if (isActive) {
+                    _playlistSearchRunning.value = false
+                }
             }
         }
+        playlistSearchJob = job
     }
 
     fun clearPlaylistSearch() {
+        playlistSearchJob?.cancel()
+        playlistSearchJob = null
         _playlistSearchResults.value = emptyList()
         _playlistSearchStatus.value = null
+        _playlistSearchRunning.value = false
     }
 
     /**
@@ -1195,12 +1227,17 @@ class AppState(
         val current = playlist.resolvedTracks
             .find { Matcher.trackKey(it.remote) == trackKey }
             ?.mark
-        val next = when (current) {
-            null -> RowMark.SKIP
-            RowMark.SKIP -> RowMark.DELETE
-            RowMark.DELETE -> null
+        setPlaylistRowMark(playlistId, trackKey, current.cycleMark())
+    }
+
+    /** Cycle a library row's mark by file path; persists the index. */
+    fun cycleLibraryRowMark(filePath: String) {
+        _library.value = _library.value.map { t ->
+            if (t.filePath == filePath) t.copy(mark = t.mark.cycleMark()) else t
         }
-        setPlaylistRowMark(playlistId, trackKey, next)
+        scope.launch {
+            withContext(Dispatchers.IO) { repository.saveLibrary(_library.value) }
+        }
     }
 
     fun setPlaylistRowMark(playlistId: String, trackKey: String, mark: RowMark?) {

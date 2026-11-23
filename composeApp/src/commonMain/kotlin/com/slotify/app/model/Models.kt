@@ -57,6 +57,8 @@ data class LocalTrack(
     val fileSizeBytes: Long? = null,
     /** Optional display path (Android content URIs keep filePath separate). */
     val displayPath: String? = null,
+    /** User mark (skip / delete); survives rescan via AppState re-apply. */
+    val mark: RowMark? = null,
 ) {
     val displayTitle: String
         get() = title?.takeIf { it.isNotBlank() }
@@ -101,6 +103,13 @@ data class TrackMatch(
 /** User mark on a playlist row: skip in playback, or stage for removal. */
 @Serializable
 enum class RowMark { SKIP, DELETE }
+
+/** Shared row-mark cycle: none → SKIP → DELETE → none (playlist + library rows). */
+fun RowMark?.cycleMark(): RowMark? = when (this) {
+    null -> RowMark.SKIP
+    RowMark.SKIP -> RowMark.DELETE
+    RowMark.DELETE -> null
+}
 
 /** One playlist row: the Spotify track plus its local match, if any. */
 @Serializable
