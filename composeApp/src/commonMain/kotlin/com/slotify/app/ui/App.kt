@@ -91,6 +91,7 @@ fun App(state: AppState) {
                 },
             ) { padding ->
                 Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+                    CoverBackdrop(state)
                     when {
                         ui.detailPlaylistId != null -> PlaylistDetailScreen(
                             state = state,

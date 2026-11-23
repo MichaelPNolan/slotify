@@ -757,7 +757,7 @@ git commit -m "AppState: expose coverArt by following nowPlaying with per-path c
 package com.slotify.app.ui
 
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.tween
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
