@@ -48,7 +48,8 @@ object Matcher {
 
         // Filename axis: Android/desktop tag readers can disagree while the
         // on-disk name is identical — take the better of tag vs filename score.
-        val parsed = parseFilename(local.filePath)
+        // Content URIs (SAF Link file) use displayPath as the human-readable name.
+        val parsed = parseFilename(local.nameForFilenameParse)
         val filenameLocal = local.copy(
             title = parsed.title,
             artist = parsed.artist,
@@ -264,7 +265,7 @@ object Matcher {
         )
 
         private val entries: List<Entry> = locals.map { l ->
-            val parsed = parseFilename(l.filePath)
+            val parsed = parseFilename(l.nameForFilenameParse)
             Entry(
                 local = l,
                 nTitle = normalizeStr(l.displayTitle),

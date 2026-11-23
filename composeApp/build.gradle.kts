@@ -69,6 +69,10 @@ kotlin {
                 implementation(libs.ktor.client.okhttp)
                 // Same tag reader as desktop — matching must see identical titles/artists.
                 implementation(libs.jaudiotagger)
+                // yt-dlp on Android via Chaquopy (search + download). Desktop keeps system yt-dlp.
+                implementation(libs.yt.dlp.android)
+                // Stream-copy remux into whitelist extensions (opus/mp4) — never re-encode.
+                implementation(libs.ffmpeg.kit.audio)
             }
         }
     }

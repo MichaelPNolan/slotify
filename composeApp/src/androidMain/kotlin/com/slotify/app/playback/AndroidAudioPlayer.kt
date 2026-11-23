@@ -72,7 +72,15 @@ class AndroidAudioPlayer : AudioPlayer {
         stopPositionPolling()
         runCatching {
             player.reset()
-            player.setDataSource(path)
+            when {
+                path.startsWith("content://") -> {
+                    // SAF URI (Link file when a real path was not resolvable).
+                    val ctx = com.slotify.app.data.androidAppContext
+                        ?: error("Android context not ready")
+                    player.setDataSource(ctx, android.net.Uri.parse(path))
+                }
+                else -> player.setDataSource(path)
+            }
             _snapshot.value = PlayerSnapshot(currentPath = path)
             player.prepareAsync()
         }.onFailure { e ->

@@ -67,13 +67,14 @@ class YoutubeDlpSource(
         result: YoutubeSearchResult,
         targetDir: String,
         onProgress: (String) -> Unit,
+        baseName: String?,
     ): String = withContext(Dispatchers.IO) {
         require(isSupported) { "yt-dlp not found on this machine" }
         val dir = File(targetDir)
         dir.mkdirs()
 
         onProgress("Starting download…")
-        val baseName = preferredBaseName(result)
+        val name = baseName?.takeIf { it.isNotBlank() } ?: preferredBaseName(result)
         val process = ProcessBuilder(
             binary,
             "-f", "251/140/bestaudio",
@@ -81,7 +82,7 @@ class YoutubeDlpSource(
             "--embed-metadata", "--embed-thumbnail",
             "--newline",
             "--no-warnings",
-            "-o", "${dir.absolutePath}/$baseName.%(ext)s",
+            "-o", "${dir.absolutePath}/$name.%(ext)s",
             result.url,
         ).redirectErrorStream(true).start()
 
@@ -102,12 +103,12 @@ class YoutubeDlpSource(
         val audioFile = dir.listFiles()
             ?.filter { f -> f.isFile && f.extension in AUDIO_LIKE }
             ?.filter { f ->
-                f.name.startsWith(baseName) || f.name.contains("[${result.videoId}]")
+                f.name.startsWith(name) || f.name.contains("[${result.videoId}]")
             }
             ?.maxByOrNull { f ->
                 when {
-                    f.name.startsWith(baseName) && f.extension == "opus" -> 4
-                    f.name.startsWith(baseName) -> 3
+                    f.name.startsWith(name) && f.extension == "opus" -> 4
+                    f.name.startsWith(name) -> 3
                     f.extension == "opus" -> 2
                     else -> 1
                 }
@@ -124,7 +125,7 @@ class YoutubeDlpSource(
         // Best-effort cleanup of stray thumbnail intermediates from failed embeds.
         dir.listFiles()?.forEach { f ->
             if (f.isFile && f.extension.lowercase() in setOf("png", "webp", "jpg", "jpeg")) {
-                val byBase = f.nameWithoutExtension == baseName
+                val byBase = f.nameWithoutExtension == name
                 val byId = f.name.contains("[${result.videoId}]")
                 if (byBase || byId) runCatching { f.delete() }
             }

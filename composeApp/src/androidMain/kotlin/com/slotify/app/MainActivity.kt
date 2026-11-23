@@ -1,7 +1,6 @@
 package com.slotify.app
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -12,6 +11,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.slotify.app.data.androidAppContext
 import com.slotify.app.data.androidBaseDir
+import com.slotify.app.platform.OpenDocumentInMusic
+import com.slotify.app.platform.SafMusic
 import com.slotify.app.platform.audioFilePicker
 import com.slotify.app.platform.jsonFilePicker
 import com.slotify.app.platform.resolvePickedAudioToPath
@@ -20,6 +21,7 @@ import com.slotify.app.spotify.JsonFileTokenStorage
 import com.slotify.app.state.AppState
 import com.slotify.app.state.createSpotifyPort
 import com.slotify.app.ui.App
+import com.slotify.app.youtube.initYoutubeRuntime
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,29 +34,33 @@ class MainActivity : ComponentActivity() {
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* result surfaced by scanner errors */ }
 
-    /** Pending SAF pick for playlist JSON (content:// URI). */
     private var pendingJsonPick: CompletableDeferred<String?>? = null
-
-    /** Pending SAF pick for an audio file (content:// URI). */
     private var pendingAudioPick: CompletableDeferred<String?>? = null
+    private var pendingTreePick: CompletableDeferred<Uri?>? = null
 
     private val jsonPicker =
-        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        registerForActivityResult(OpenDocumentInMusic()) { uri: Uri? ->
             pendingJsonPick?.complete(uri?.toString())
             pendingJsonPick = null
         }
 
     private val audioPicker =
-        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        registerForActivityResult(OpenDocumentInMusic()) { uri: Uri? ->
             pendingAudioPick?.complete(uri?.toString())
             pendingAudioPick = null
+        }
+
+    /** Input = EXTRA_INITIAL_URI (Music tree when known). */
+    private val treePicker =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
+            pendingTreePick?.complete(uri)
+            pendingTreePick = null
         }
 
     private var appState: AppState? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // App-private storage for settings/playlists/library index.
         androidBaseDir = filesDir.absolutePath
         androidAppContext = applicationContext
         setClipboardContext(this)
@@ -62,6 +68,7 @@ class MainActivity : ComponentActivity() {
         jsonFilePicker = { awaitPlaylistJsonPick() }
         audioFilePicker = { awaitAudioFilePick() }
 
+        initYoutubeRuntime(applicationContext)
         requestAudioPermissionIfMissing()
 
         setContent {
@@ -69,7 +76,6 @@ class MainActivity : ComponentActivity() {
             App(
                 state = state,
                 pkceAwait = { _ ->
-                    // Android PKCE loopback arrives in a later pass; cookie login works today.
                     throw IllegalStateException("Browser sign-in not available on Android yet — use the cookie method")
                 },
             )
@@ -81,6 +87,8 @@ class MainActivity : ComponentActivity() {
         pendingJsonPick = null
         pendingAudioPick?.complete(null)
         pendingAudioPick = null
+        pendingTreePick?.complete(null)
+        pendingTreePick = null
         appState?.release()
         appState = null
         jsonFilePicker = null
@@ -90,7 +98,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun rememberAppState(): AppState {
-        // Called from composition — reuse the single instance created once.
         return appState ?: run {
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             val spotify = createSpotifyPort(JsonFileTokenStorage(filesDir.absolutePath), scope)
@@ -98,10 +105,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Block (off the UI thread) until the user picks a JSON file.
-     * Returns `content://…` or null on cancel.
-     */
+    /** Opens inside the Music tree when a grant already exists. */
     private fun awaitPlaylistJsonPick(): String? {
         val deferred = CompletableDeferred<String?>()
         runOnUiThread {
@@ -109,40 +113,51 @@ class MainActivity : ComponentActivity() {
             jsonPicker.launch(arrayOf("application/json", "text/plain", "text/*", "*/*"))
         }
         return runBlocking {
-            withContext(Dispatchers.Default) {
-                // Wait indefinitely for user; cancel path completes with null.
-                deferred.await()
-            }
+            withContext(Dispatchers.Default) { deferred.await() }
         }
     }
 
     /**
-     * Block until the user picks an audio file, then resolve the SAF URI to a
-     * real filesystem path (Link file needs File/player/tag access).
-     * Null on cancel or unresolvable pick.
+     * 1. Ensure persisted Music tree (one-time folder grant).
+     * 2. Open document picker with EXTRA_INITIAL_URI = that tree.
+     * 3. Persist read access; resolve to a path or keep `content://`.
      */
     private fun awaitAudioFilePick(): String? {
+        ensureMusicTreeAccess() ?: return null
+
         val deferred = CompletableDeferred<String?>()
         runOnUiThread {
             pendingAudioPick = deferred
-            // audio/* covers mp3/flac/opus/m4a/aac/wav/aiff on the system picker.
             audioPicker.launch(arrayOf("audio/*", "*/*"))
         }
         val uriString = runBlocking {
             withContext(Dispatchers.Default) { deferred.await() }
         } ?: return null
-        // Persist read access for the copy path if we later re-open the URI.
-        runCatching {
-            contentResolver.takePersistableUriPermission(
-                Uri.parse(uriString),
-                Intent.FLAG_GRANT_READ_URI_PERMISSION,
-            )
-        }
+
+        val uri = runCatching { Uri.parse(uriString) }.getOrNull()
+        if (uri != null) SafMusic.takeReadPermission(uri)
+
         return runBlocking {
             withContext(Dispatchers.IO) {
                 runCatching { resolvePickedAudioToPath(uriString) }.getOrNull()
             }
         }
+    }
+
+    /** Returns tree URI with persisted read, or null if the user cancels. */
+    private fun ensureMusicTreeAccess(): Uri? {
+        SafMusic.savedTree()?.let { return it }
+
+        val deferred = CompletableDeferred<Uri?>()
+        runOnUiThread {
+            pendingTreePick = deferred
+            treePicker.launch(SafMusic.musicTreeHint())
+        }
+        val tree = runBlocking {
+            withContext(Dispatchers.Default) { deferred.await() }
+        } ?: return null
+        SafMusic.saveTree(tree)
+        return tree
     }
 
     private fun requestAudioPermissionIfMissing() {

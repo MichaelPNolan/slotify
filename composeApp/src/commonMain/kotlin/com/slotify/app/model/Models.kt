@@ -60,10 +60,13 @@ data class LocalTrack(
 ) {
     val displayTitle: String
         get() = title?.takeIf { it.isNotBlank() }
-            ?: fileNameFromPath(filePath)
+            ?: fileNameFromPath(displayPath ?: filePath)
 
     val displayArtist: String
         get() = artist?.takeIf { it.isNotBlank() } ?: "Unknown artist"
+
+    /** Best name for filename-axis matching (content URIs use [displayPath]). */
+    val nameForFilenameParse: String get() = displayPath ?: filePath
 
     /**
      * Path relative to the longest matching [libraryRoots] entry

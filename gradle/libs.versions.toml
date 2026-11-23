@@ -10,6 +10,8 @@ vlcj = "4.12.1"
 jna = "5.19.1"
 activityCompose = "1.13.0"
 sqliteJdbc = "3.47.1.0"
+ytDlpAndroid = "2.0.2"
+ffmpegKitAudio = "8.1.9"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
@@ -25,6 +27,9 @@ jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 jna-platform = { module = "net.java.dev.jna:jna-platform", version.ref = "jna" }
 sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqliteJdbc" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+# Android yt-dlp (Chaquopy / Python 3.13) + ffmpeg for stream-copy remux. Desktop uses system yt-dlp — unchanged.
+yt-dlp-android = { module = "dev.ffmpegkit-maintained:yt-dlp-android", version.ref = "ytDlpAndroid" }
+ffmpeg-kit-audio = { module = "dev.ffmpegkit-maintained:ffmpeg-kit-audio", version.ref = "ffmpegKitAudio" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

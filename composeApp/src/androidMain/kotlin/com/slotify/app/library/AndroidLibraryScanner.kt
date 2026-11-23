@@ -35,9 +35,54 @@ class AndroidLibraryScanner(
         }
 
     override suspend fun readTrack(path: String): LocalTrack? = withContext(Dispatchers.IO) {
+        if (path.startsWith("content://")) {
+            return@withContext readContentUri(path)
+        }
         val file = File(path)
         if (!file.isFile || file.extension.lowercase() !in audioExtensions) return@withContext null
         readFileTags(file)
+    }
+
+    /**
+     * SAF content URI (Link file when path resolution failed). Uses display
+     * name for filename axis + MediaMetadataRetriever for duration/tags.
+     */
+    private fun readContentUri(uriString: String): LocalTrack? {
+        val ctx = com.slotify.app.data.androidAppContext ?: return null
+        val uri = android.net.Uri.parse(uriString)
+        val name = com.slotify.app.platform.safDisplayName(uriString)
+            ?: return null
+        val ext = name.substringAfterLast('.', "").lowercase()
+        if (ext !in audioExtensions && ext.isNotBlank()) return null
+        val parsed = parseFilename(name)
+        val base = LocalTrack(
+            filePath = uriString,
+            displayPath = name,
+            fileFormat = ext.ifBlank { null },
+            fileSizeBytes = runCatching {
+                ctx.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize }
+            }.getOrNull(),
+        )
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(ctx, uri)
+            base.copy(
+                title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                    ?.ifBlank { null } ?: parsed.title,
+                artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                    ?.ifBlank { null } ?: parsed.artist,
+                album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+                    ?.ifBlank { null },
+                durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    ?.toLongOrNull(),
+                trackNumber = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
+                    ?.filter { it.isDigit() }?.ifBlank { null }?.toIntOrNull(),
+            )
+        } catch (_: Exception) {
+            base.copy(title = parsed.title, artist = parsed.artist)
+        } finally {
+            runCatching { retriever.release() }
+        }
     }
 
     private fun readFileTags(file: File): LocalTrack {

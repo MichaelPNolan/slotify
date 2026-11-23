@@ -8,6 +8,7 @@ import com.slotify.app.data.PlaybackStore
 import com.slotify.app.data.PlaylistProgress
 import com.slotify.app.library.LibraryScanner
 import com.slotify.app.library.createLibraryScanner
+import com.slotify.app.library.writeAudioMetadata
 import com.slotify.app.match.Matcher
 import com.slotify.app.model.AppPlaylist
 import com.slotify.app.model.LocalTrack
@@ -27,6 +28,7 @@ import com.slotify.app.youtube.YoutubeRanking
 import com.slotify.app.youtube.YoutubeSearchResult
 import com.slotify.app.youtube.YoutubeSource
 import com.slotify.app.youtube.createYoutubeSource
+import com.slotify.app.youtube.preferredDownloadBaseName
 import com.slotify.app.youtube.searchWithFallbacks
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineScope
@@ -358,7 +360,7 @@ class AppState(
         remoteTrack: RemoteTrack? = null,
     ) {
         if (!youtube.isSupported) {
-            emit("YouTube fetch is desktop-only for now")
+            emit("YouTube fetch unavailable — yt-dlp runtime failed to start")
             return
         }
         scope.launch {
@@ -402,7 +404,7 @@ class AppState(
      */
     fun batchFetchYoutube(playlistId: String, minScore: Double = 0.85) {
         if (!youtube.isSupported) {
-            emit("YouTube fetch is desktop-only for now")
+            emit("YouTube fetch unavailable — yt-dlp runtime failed to start")
             return
         }
         if (_youtubeBatchRunning.value) {
@@ -491,17 +493,26 @@ class AppState(
         playlistId: String?,
         remoteTrack: RemoteTrack?,
     ): Boolean {
+        // Prefer Spotify artist/title for the on-disk name when the row is known —
+        // YouTube title/channel often fails fuzzy match against the playlist.
+        val preferredBase = remoteTrack?.let { preferredDownloadBaseName(it) }
         val path = runCatching {
-            youtube.download(result, youtubeDownloadDir()) { line ->
-                _youtubeStatus.value = line
-            }.let { promoteFromStaging(it) }
+            youtube.download(
+                result = result,
+                targetDir = youtubeDownloadDir(),
+                onProgress = { line -> _youtubeStatus.value = line },
+                baseName = preferredBase,
+            ).let { promoteFromStaging(it) }
         }.getOrElse { e ->
             emit("Download failed for “${result.title}”: ${e.message}")
             return false
         }
 
         _youtubeStatus.value = "Indexing new file…"
-        val local = withContext(Dispatchers.IO) { scanner.readTrack(path) }
+        val finalPath = withContext(Dispatchers.IO) {
+            retitleDownloadedFile(path, remoteTrack, preferredBase)
+        }
+        val local = withContext(Dispatchers.IO) { scanner.readTrack(finalPath) }
         if (local != null && _library.value.none { it.filePath == local.filePath }) {
             _library.value = _library.value + local
             withContext(Dispatchers.IO) { repository.saveLibrary(_library.value) }
@@ -522,6 +533,41 @@ class AppState(
             matchPlaylist(playlistId)
         }
         return true
+    }
+
+    /**
+     * After download: overwrite tags with Spotify metadata (yt-dlp embed uses
+     * YouTube title/channel) and rename to `Artist - Title` when we know the row.
+     * Returns the path to index (may differ after rename).
+     */
+    private suspend fun retitleDownloadedFile(
+        path: String,
+        remoteTrack: RemoteTrack?,
+        preferredBase: String?,
+    ): String {
+        if (remoteTrack == null) return path
+        val src = java.io.File(path)
+        if (!src.isFile) return path
+
+        writeAudioMetadata(
+            path = src.absolutePath,
+            title = remoteTrack.name,
+            artist = remoteTrack.artistNames.ifBlank { null },
+            album = remoteTrack.albumName,
+            isrc = remoteTrack.isrc,
+        )
+
+        val base = preferredBase ?: return src.absolutePath
+        if (src.nameWithoutExtension == base) return src.absolutePath
+        val dest = java.io.File(src.parentFile, "$base.${src.extension}")
+        if (dest.absolutePath == src.absolutePath) return src.absolutePath
+        if (dest.exists()) {
+            // Same final name already present — keep this file as a numbered take.
+            val alt = java.io.File(src.parentFile, "$base (2).${src.extension}")
+            if (!alt.exists() && src.renameTo(alt)) return alt.absolutePath
+            return src.absolutePath
+        }
+        return if (src.renameTo(dest)) dest.absolutePath else src.absolutePath
     }
 
     /** Clear a finished YouTube status so the Find dialog can start another fetch. */

@@ -6,7 +6,6 @@ import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import com.slotify.app.data.androidAppContext
-import com.slotify.app.data.defaultSlotifyMusicDir
 import com.slotify.app.data.sanitizeSlotifyBaseName
 import java.io.File
 
@@ -15,11 +14,9 @@ import java.io.File
 internal var audioFilePicker: (() -> String?)? = null
 
 /**
- * Open a system audio picker. Returns a **real filesystem path** when the
- * pick can be resolved (so `File`/player/tag readers work), or null on cancel.
- *
- * SAF content URIs are resolved via document ID / MediaStore; if that fails
- * the bytes are copied into the managed Slotify music dir.
+ * Open a system audio picker (after ensuring Music tree access).
+ * Returns a **real filesystem path** when resolvable, otherwise a persisted
+ * `content://` URI string (player/scanner accept both). Null on cancel.
  */
 actual fun pickAudioFile(initialDir: String?): String? = audioFilePicker?.invoke()
 
@@ -33,18 +30,23 @@ internal var jsonFilePicker: (() -> String?)? = null
 actual fun pickPlaylistJsonFile(): String? = jsonFilePicker?.invoke()
 
 /**
- * Resolve a picked document to a readable absolute path.
- * Order: already a real path → externalstorage primary: docId → MediaStore DATA
- * → copy into [defaultSlotifyMusicDir].
+ * Resolve a picked document to a playable identifier.
+ *
+ * Order (user guidance — prefer SAF identity over brittle path concat):
+ * 1. Already a real path / `file://`
+ * 2. `primary:` / secondary volume document ID → absolute path when the file exists
+ * 3. MediaStore `DATA` column when present
+ * 4. **Keep the `content://` URI** (persist permission in MainActivity) —
+ *    do not force-copy large files into Slotify just to get a path.
  */
 internal fun resolvePickedAudioToPath(uriString: String): String? {
     if (uriString.isBlank()) return null
     if (!uriString.startsWith("content://")) {
-        val direct = File(uriString.removePrefix("file://"))
-        return direct.takeIf { it.isFile }?.absolutePath
+        return pathIfReadableFile(uriString)
     }
     resolveContentToFilePath(uriString)?.let { return it }
-    return copyContentUriIntoSlotifyDir(uriString)
+    // Unresolvable path — store the URI itself (see AndroidAudioPlayer / scanner).
+    return uriString
 }
 
 private fun resolveContentToFilePath(uriString: String): String? {
@@ -91,13 +93,17 @@ private fun resolveContentToFilePath(uriString: String): String? {
     return null
 }
 
-private fun copyContentUriIntoSlotifyDir(uriString: String): String? {
+/**
+ * Last-resort copy into the managed Slotify dir — only when the caller
+ * explicitly needs a real file (e.g. tag rewrite). Link file no longer uses this.
+ */
+internal fun copyContentUriIntoSlotifyDir(uriString: String): String? {
     val ctx = androidAppContext ?: return null
     val uri = Uri.parse(uriString)
-    val displayName = queryDisplayName(ctx, uri) ?: "linked audio"
+    val displayName = safDisplayName(uriString) ?: "linked audio"
     val ext = displayName.substringAfterLast('.', "").lowercase()
     val base = sanitizeSlotifyBaseName(displayName.substringBeforeLast('.'))
-    val dir = File(defaultSlotifyMusicDir())
+    val dir = File(com.slotify.app.data.defaultSlotifyMusicDir())
     if (!dir.isDirectory && !dir.mkdirs()) return null
     val dest = File(dir, if (ext.isBlank()) base else "$base.$ext")
     return runCatching {
@@ -107,13 +113,3 @@ private fun copyContentUriIntoSlotifyDir(uriString: String): String? {
         dest.absolutePath
     }.getOrNull()
 }
-
-private fun queryDisplayName(ctx: Context, uri: Uri): String? = runCatching {
-    ctx.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)
-        ?.use { c ->
-            if (c.moveToFirst()) {
-                val idx = c.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
-                if (idx >= 0) c.getString(idx) else null
-            } else null
-        }
-}.getOrNull()

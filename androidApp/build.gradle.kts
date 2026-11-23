@@ -14,6 +14,11 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+
+        // yt-dlp-android + ffmpeg-kit ship arm64-v8a and x86_64 only (no 32-bit).
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     compileOptions {
@@ -26,6 +31,10 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+        jniLibs {
+            // Chaquopy / ffmpeg-kit need .so extracted from the APK.
+            useLegacyPackaging = true
         }
     }
 }

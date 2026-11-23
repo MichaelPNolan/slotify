@@ -20,8 +20,9 @@ data class YoutubeSearchResult(
 }
 
 /**
- * Platform YouTube source. Desktop: yt-dlp (search + quality-preserving
- * audio extraction). Android: unsupported for now (no yt-dlp runtime).
+ * Platform YouTube source.
+ * Desktop: system `yt-dlp` + ffmpeg (unchanged).
+ * Android: bundled yt-dlp via Chaquopy (`yt-dlp-android`) + ffmpeg-kit remux.
  */
 interface YoutubeSource {
     /** False on platforms without the yt-dlp toolchain. */
@@ -34,13 +35,36 @@ interface YoutubeSource {
      * Download [result]'s audio into [targetDir] as a **stream copy**
      * (no re-encode). Returns the resulting file path, or throws.
      * [onProgress] receives status lines from the IO thread.
+     *
+     * [baseName] is the on-disk basename (no extension) when the caller knows
+     * the desired `Artist - Title` (Spotify row). Null → platform default from
+     * the YouTube result (title/channel — often wrong for matching).
      */
-    suspend fun download(result: YoutubeSearchResult, targetDir: String, onProgress: (String) -> Unit): String
+    suspend fun download(
+        result: YoutubeSearchResult,
+        targetDir: String,
+        onProgress: (String) -> Unit,
+        baseName: String? = null,
+    ): String
 }
 
 expect fun createYoutubeSource(): YoutubeSource
 
 // ── Pure helpers (commonMain, unit-tested) ───────────────────────────────
+
+/**
+ * On-disk basename for a YouTube fetch when the Spotify row is known.
+ * Prefer Spotify artist/title so filename + tags match what the matcher scores
+ * against — YouTube titles/channels often differ enough to fail fuzzy match.
+ */
+fun preferredDownloadBaseName(remote: com.slotify.app.model.RemoteTrack): String {
+    val artist = remote.artistNames.trim()
+    val title = remote.name.trim()
+    val joined = listOf(artist, title).filter { it.isNotEmpty() }.joinToString(" - ")
+    return com.slotify.app.data.sanitizeSlotifyBaseName(
+        joined.ifBlank { title.ifBlank { artist } },
+    ).take(180)
+}
 
 object YoutubeQuery {
     /**
