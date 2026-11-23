@@ -35,18 +35,23 @@ Mirror the existing `LibraryScanner` pattern:
 
 - `commonMain`: `interface CoverArtReader { suspend fun readArt(path: String): ByteArray? }`
   plus `expect fun createCoverArtReader(): CoverArtReader`.
-- **Desktop impl:** jaudiotagger (already a dependency) —
-  `AudioFileIO.read(file).tag?.createFirstArtwork()?.binaryData`.
-  *Risk:* verify early that this returns art for opus; if null, add a small
-  fallback parser for the base64 `METADATA_BLOCK_PICTURE` block in the Vorbis
-  comment (pure, unit-testable).
-- **Android impl:** jaudiotagger first (parity with scanner), fallback to
-  `MediaMetadataRetriever.getEmbeddedPicture`. `content://` link paths skip
-  straight to the retriever (jaudiotagger cannot open URIs).
-- Decoding: `expect fun decodeImageBitmap(bytes: ByteArray): ImageBitmap?` —
-  Android `BitmapFactory.decodeByteArray().asImageBitmap()`, desktop Skia
-  `Image.makeFromEncoded(bytes).asComposeImageBitmap()` (skiko ships with
-  Compose Desktop). Everything `runCatching → null`.
+- **Verified facts (2026-11-23):** the project's jaudiotagger 3.0.1 build has
+  **no opus reader at all** (`No Reader associated with this extension:opus`),
+  while `getFirstArtwork()` on mp3 works (returns APIC bytes). Decoding is a
+  common CMP API: `ByteArray.decodeToImageBitmap()` — no expect/actual needed
+  for decode.
+- **Desktop impl:** `.opus` → dedicated `readOpusEmbeddedPicture(path)` parser
+  in commonMain (walk Ogg pages → `OpusTags` packet → find
+  `METADATA_BLOCK_PICTURE` → base64-decode → skip FLAC-Picture header → raw
+  image bytes); other formats → jaudiotagger `tag?.firstArtwork?.binaryData`.
+  Everything `runCatching → null`.
+- **Android impl:** `content://` → `MediaMetadataRetriever` only (jaudiotagger
+  cannot open URIs); `.opus` files → the common parser, retriever fallback;
+  other formats → jaudiotagger first (parity with the scanner), retriever
+  fallback.
+- A file with **no** embedded picture returns `null` at every layer — the app
+  then keeps the plain background and must never generate, fetch, or acquire
+  a substitute image.
 
 ## [S5] State & caching (AppState)
 
@@ -82,10 +87,11 @@ Mirror the existing `LibraryScanner` pattern:
 
 - **commonTest:** `CoverArtCache` get/put/evict/size tests with tiny in-memory
   `ImageBitmap`s.
-- **desktopTest:** committed fixture audio file with embedded art (opus
-  preferred, mp3 fallback if the local toolchain cannot write opus art);
-  asserts bytes read + decode succeed; artless fixture asserts null. Skip
-  gracefully when fixtures cannot be generated, like `VlcAudioPlayerTest`.
+- **desktopTest:** four committed fixtures under
+  `desktopTest/resources/art/` (`cover-art.opus`, `cover-art.mp3`,
+  `no-art.opus`, `no-art.mp3` — generated once via mutagen/ffmpeg): with-art
+  fixtures assert bytes read (and PNG magic), artless fixtures assert null.
+  Missing-path input asserts null. No runtime fixture generation in tests.
 - **Manual:** desktop `run.sh` + fresh APK — sharp cover behind rows, survives
   pause, clears when nothing loaded, plain background for artless files,
   no stale art on fast skip, no tab-switch flicker.
