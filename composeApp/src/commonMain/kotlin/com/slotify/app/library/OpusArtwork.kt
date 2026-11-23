@@ -13,9 +13,11 @@ import java.util.Base64
 fun readOpusEmbeddedPicture(path: String): ByteArray? = runCatching {
     val file = File(path)
     if (!file.isFile) return null
-    // OpusTags lives in the first Ogg pages (RFC 7845) — 512 KiB is ample.
+    // OpusTags lives in the first Ogg pages (RFC 7845), but the comment header
+    // can be huge — a maxres cover is ~200 KB base64 and lyric videos embed
+    // full lyrics — so allow up to 16 MB of header before giving up.
     val head = file.inputStream().use { input ->
-        val buf = ByteArray(512 * 1024)
+        val buf = ByteArray(16 * 1024 * 1024)
         var offset = 0
         while (offset < buf.size) {
             val n = input.read(buf, offset, buf.size - offset)
@@ -27,13 +29,20 @@ fun readOpusEmbeddedPicture(path: String): ByteArray? = runCatching {
     parseOpusPicture(head)
 }.getOrNull()
 
-/** Ogg page walk over [data]; collects the OpusTags packet and decodes its picture. */
+/**
+ * Walks the Ogg packet stream (not page positions — real muxers place
+ * `OpusHead`/`OpusTags` anywhere: both on page 0, spanning pages, etc.) and
+ * decodes the picture from packet 1 (`OpusTags`). Packet boundaries follow
+ * the lacing segments: a segment of 255 continues onto the next page.
+ */
 internal fun parseOpusPicture(data: ByteArray): ByteArray? {
     var offset = 0
-    var pageIndex = 0
-    val packet = ArrayList<Byte>(8192)
-    var collecting = false
-    while (offset + 27 <= data.size && pageIndex <= 64) {
+    var packetNumber = 0
+    val current = ArrayList<Byte>(8192)
+    // No page-count cap: comment headers with big art + lyrics span dozens of
+    // pages (real files exceed 64 easily). Termination is data-bounded — every
+    // iteration consumes one page, and offsets only move forward.
+    while (offset + 27 <= data.size) {
         if (!data.regionMatchesAscii(offset, "OggS")) return null
         val segCount = data[offset + 26].toInt() and 0xFF
         val table = offset + 27
@@ -43,44 +52,27 @@ internal fun parseOpusPicture(data: ByteArray): ByteArray? {
         val payload = table + segCount
         if (payload + payloadLen > data.size) return null
 
-        when (pageIndex) {
-            0 -> if (!data.regionMatchesAscii(payload, "OpusHead")) return null
-            1 -> {
-                if (!data.regionMatchesAscii(payload, "OpusTags")) return null
-                collecting = true
-                if (appendLeadingPacket(data, table, segCount, payload, packet)) {
-                    return pictureFromCommentPacket(packet)
+        var pos = payload
+        for (i in 0 until segCount) {
+            val len = data[table + i].toInt() and 0xFF
+            for (j in 0 until len) current.add(data[pos + j])
+            pos += len
+            if (len < 255) {
+                // Packet complete — header packets must come first, in order.
+                when (packetNumber) {
+                    0 -> if (!regionMatchesAscii(current, 0, "OpusHead")) return null
+                    1 -> {
+                        if (!regionMatchesAscii(current, 0, "OpusTags")) return null
+                        return pictureFromCommentPacket(current)
+                    }
                 }
-            }
-            else -> if (collecting && appendLeadingPacket(data, table, segCount, payload, packet)) {
-                return pictureFromCommentPacket(packet)
+                packetNumber++
+                current.clear()
             }
         }
         offset = payload + payloadLen
-        pageIndex++
     }
     return null
-}
-
-/**
- * Appends the page's leading packet bytes to [packet] (lacing runs of 255
- * continue a packet onto the next page). True once a segment < 255 ends it.
- */
-private fun appendLeadingPacket(
-    data: ByteArray,
-    table: Int,
-    segCount: Int,
-    payload: Int,
-    packet: ArrayList<Byte>,
-): Boolean {
-    var pos = payload
-    for (i in 0 until segCount) {
-        val len = data[table + i].toInt() and 0xFF
-        for (j in 0 until len) packet.add(data[pos + j])
-        pos += len
-        if (len < 255) return true
-    }
-    return false
 }
 
 /** OpusTags packet → picture bytes from the first METADATA_BLOCK_PICTURE comment. */
