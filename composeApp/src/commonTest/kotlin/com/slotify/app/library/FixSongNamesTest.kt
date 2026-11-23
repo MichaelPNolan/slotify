@@ -52,4 +52,36 @@ class FixSongNamesTest {
         assertEquals("Name", sanitizeFileNamePart("Name . "))
         assertEquals("A_B", sanitizeFileNamePart("A/B"))
     }
+
+    // ── Conservative detection (no false positives on good names) ───
+
+    @Test
+    fun multiArtistTagComparesByPrimaryArtistOnly() {
+        // Tag "Queen; David Bowie" must not flag "Queen - Song".
+        assertFalse(isSongFileNameMisnamed("Queen - Song", "Queen; David Bowie"))
+        assertEquals(
+            "Queen - Song.mp3",
+            proposeSongFileName("Queen; David Bowie", "Song", "mp3"),
+        )
+    }
+
+    @Test
+    fun alreadyShapedNamesAreLeftAlone() {
+        // Song-first / unknown leading text — we can't judge, so don't touch.
+        assertFalse(isSongFileNameMisnamed("Piano Man - Billy Joel", "Billy Joel"))
+        assertFalse(isSongFileNameMisnamed("The Very Best of Billy Joel - Hits", "Billy Joel"))
+        // Artist-first with a no-space dash is still the right shape.
+        assertFalse(isSongFileNameMisnamed("Billy Joel-Piano Man", "Billy Joel"))
+        // En dash counts as the separator.
+        assertFalse(isSongFileNameMisnamed("Queen – Song", "Queen"))
+    }
+
+    @Test
+    fun onlyNoShapeOrLeadingTrackNumberIsFlagged() {
+        // No dash at all → clearly not artist-song.
+        assertTrue(isSongFileNameMisnamed("Piano Man", "Billy Joel"))
+        assertTrue(isSongFileNameMisnamed("01 Piano Man", "Billy Joel"))
+        // Leading track number → confidently not an artist.
+        assertTrue(isSongFileNameMisnamed("01 - Piano Man", "Billy Joel"))
+    }
 }

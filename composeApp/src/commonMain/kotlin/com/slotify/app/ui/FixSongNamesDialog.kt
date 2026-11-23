@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.slotify.app.library.isSongFileNameMisnamed
 import com.slotify.app.state.FixNamesSession
 
 /** One-case-at-a-time rename walk: current name → editable proposal → Rename. */
@@ -77,15 +78,16 @@ fun FixSongNamesDialog(
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
-                    if (case.expectedPrefix.isNotEmpty() &&
-                        !edited.trim().startsWith(case.expectedPrefix, ignoreCase = true)
-                    ) {
-                        Text(
-                            text = "Doesn't start with “${case.expectedPrefix}” — " +
-                                "this file will be offered again next time.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.secondary,
-                        )
+                    if (case.primaryArtist.isNotEmpty()) {
+                        val editedBase = edited.trim().substringBeforeLast('.')
+                        if (isSongFileNameMisnamed(editedBase, case.primaryArtist)) {
+                            Text(
+                                text = "Should look like “${case.primaryArtist} - <song>” — " +
+                                    "otherwise this file will be offered again next time.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.secondary,
+                            )
+                        }
                     }
                     Text(
                         text = "Edit the name if you like. Renaming updates every playlist " +

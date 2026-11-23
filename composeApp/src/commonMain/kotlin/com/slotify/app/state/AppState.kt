@@ -8,7 +8,6 @@ import com.slotify.app.data.PlaybackStore
 import com.slotify.app.data.PlaylistProgress
 import com.slotify.app.library.isSongFileNameMisnamed
 import com.slotify.app.library.proposeSongFileName
-import com.slotify.app.library.sanitizeFileNamePart
 import com.slotify.app.library.LibraryScanner
 import com.slotify.app.library.createLibraryScanner
 import com.slotify.app.library.writeAudioMetadata
@@ -99,8 +98,8 @@ data class FixNamesCase(
     val newPath: String,
     val currentName: String,
     val proposedName: String,
-    /** Sanitized "<artist> - " prefix — edits outside it get re-offered later. */
-    val expectedPrefix: String = "",
+    /** Primary (first) tag artist — drives re-offer warnings for edits. */
+    val primaryArtist: String = "",
 )
 
 /** Walk state for the fix-song-names mode (one case at a time). */
@@ -1411,7 +1410,7 @@ class AppState(
                 newPath = java.io.File(parent, proposed).path,
                 currentName = file.name,
                 proposedName = proposed,
-                expectedPrefix = sanitizeFileNamePart(artist) + " - ",
+                primaryArtist = primaryArtistName(artist),
             )
         }
         if (cases.isEmpty()) {
