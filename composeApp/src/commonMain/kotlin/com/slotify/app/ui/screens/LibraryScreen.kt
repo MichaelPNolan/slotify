@@ -58,6 +58,7 @@ fun LibraryScreen(state: AppState) {
     val playedKeys by state.playedKeys.collectAsState()
     val playerSnap by state.player.snapshot.collectAsState()
     val playlists by state.playlists.collectAsState()
+    val settings by state.settings.collectAsState()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
@@ -188,6 +189,11 @@ fun LibraryScreen(state: AppState) {
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        MarkChip(
+                            mark = track.mark,
+                            onClick = { state.cycleLibraryRowMark(track.filePath) },
+                        )
+                        Spacer(Modifier.width(6.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = track.displayTitle,
@@ -208,19 +214,16 @@ fun LibraryScreen(state: AppState) {
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        Spacer(Modifier.width(8.dp))
+                        Spacer(Modifier.width(6.dp))
                         Text(
                             text = track.durationMs?.let { formatMs(it) } ?: "—",
                             style = MaterialTheme.typography.bodySmall,
                             color = subColor,
                         )
-                        Spacer(Modifier.width(8.dp))
-                        MarkChip(
-                            mark = track.mark,
-                            onClick = { state.cycleLibraryRowMark(track.filePath) },
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        IconButton(onClick = { addTarget = track }) {
+                        IconButton(
+                            onClick = { addTarget = track },
+                            modifier = Modifier.size(36.dp),
+                        ) {
                             Icon(
                                 Icons.Default.Add,
                                 contentDescription = "Add to playlist",
@@ -234,6 +237,7 @@ fun LibraryScreen(state: AppState) {
                                 if (isCurrent) state.togglePlay()
                                 else state.requestLibraryPick(filtered, index)
                             },
+                            modifier = Modifier.size(36.dp),
                         ) {
                             Icon(
                                 imageVector = if (showStop) Icons.Default.Stop else Icons.Default.PlayArrow,
@@ -243,6 +247,7 @@ fun LibraryScreen(state: AppState) {
                                 } else {
                                     MaterialTheme.colorScheme.primary
                                 },
+                                modifier = Modifier.size(20.dp),
                             )
                         }
                     }
@@ -255,6 +260,7 @@ fun LibraryScreen(state: AppState) {
         AddToPlaylistDialog(
             track = track,
             playlists = playlists.filterNot { it.trashed },
+            lastAddedId = settings.lastAddedPlaylistId,
             onCreate = { name ->
                 state.createPlaylistWithTrack(name, track)
                 addTarget = null

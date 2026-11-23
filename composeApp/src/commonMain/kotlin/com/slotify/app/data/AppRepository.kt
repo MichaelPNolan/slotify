@@ -20,6 +20,8 @@ data class AppSettings(
     val volume: Float = 1.0f,
     /** Legal notice acknowledged — suppresses the first-run dialog. */
     val disclaimerAccepted: Boolean = false,
+    /** Playlist that most recently received an added song (Add dialog shows it first). */
+    val lastAddedPlaylistId: String? = null,
 )
 
 /** Resume point for one playlist (survives app restart). */

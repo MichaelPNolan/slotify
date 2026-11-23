@@ -1296,6 +1296,7 @@ class AppState(
             source = PlaylistSource.JSON,
         )
         _playlists.value = _playlists.value + playlist
+        updateSettings { it.copy(lastAddedPlaylistId = playlist.id) }
         scope.launch {
             withContext(Dispatchers.IO) { repository.savePlaylists(_playlists.value) }
             emit("Created \"$trimmed\"")
@@ -1320,6 +1321,7 @@ class AppState(
                 ),
             )
         }
+        updateSettings { it.copy(lastAddedPlaylistId = playlistId) }
         scope.launch {
             withContext(Dispatchers.IO) { repository.savePlaylists(_playlists.value) }
             emit("Added to \"${playlist.name}\"")
@@ -1814,6 +1816,9 @@ class AppState(
         } else {
             resolvedIndex.coerceIn(0, queue.lastIndex)
         }
+        if (mode.isArtistMode() && savedProgress == null) {
+            anchorArtistSessionToCurrent()
+        }
         playAt(queueIndex, seekToMs = startPos)
         persistPlaybackProgress()
     }
@@ -1961,6 +1966,35 @@ class AppState(
         session.restartAround(artist)
     }
 
+    /**
+     * Build the artist session around the song being started: the current
+     * artist's block plays first (current song counts toward the quota), so
+     * ARTIST_2 finishes that artist before moving on (S5).
+     */
+    private fun anchorArtistSessionToCurrent() {
+        val session = ensureArtistSession() ?: return
+        val currentKey = queue.getOrNull(queueIndex)?.trackKey ?: return
+        val artist = artistItems().find { it.key == currentKey }?.artist ?: return
+        session.restartAround(artist)
+    }
+
+    /** Keys marked skip/delete in the active source right now (advance-time guard). */
+    private fun markedSkipKeys(): Set<String> {
+        val plId = _activePlaylistId.value
+        if (plId != null) {
+            return _playlists.value.find { it.id == plId }
+                ?.resolvedTracks
+                ?.filter { it.mark == RowMark.SKIP || it.mark == RowMark.DELETE }
+                ?.map { Matcher.trackKey(it.remote) }
+                ?.toSet()
+                ?: emptySet()
+        }
+        return _library.value
+            .filter { it.mark == RowMark.SKIP || it.mark == RowMark.DELETE }
+            .map { "lib:${it.filePath}" }
+            .toSet()
+    }
+
     /** Snapshot index + position into [playbackStore] and write playback.json. */
     private fun persistPlaybackProgress() {
         val plId = _activePlaylistId.value ?: return
@@ -2011,6 +2045,9 @@ class AppState(
             else -> entries
         }
         queueIndex = queue.indexOfFirst { it.trackKey == startEntry.trackKey }.coerceAtLeast(0)
+        if (mode.isArtistMode()) {
+            anchorArtistSessionToCurrent()
+        }
         playAt(queueIndex)
     }
 
@@ -2042,31 +2079,56 @@ class AppState(
     private fun advance(delta: Int, auto: Boolean) {
         if (queue.isEmpty()) return
         val mode = _playbackMode.value
+        val skipped = if (delta > 0) markedSkipKeys() else emptySet()
         if (mode.isArtistMode() && delta > 0) {
-            if (queueIndex < queue.lastIndex) {
-                playAt(queueIndex + 1)
+            // Walk history past rows marked skip/delete (possibly marked mid-session).
+            var target = queueIndex + 1
+            while (target in queue.indices && queue[target].trackKey in skipped) target++
+            if (target in queue.indices) {
+                playAt(target)
                 persistPlaybackProgress()
                 return
             }
             // End of history — ask the artist session for the next pick (S5).
             val session = ensureArtistSession()
-            var key = session?.next(_playedKeys.value)
-            if (key == null && session != null) {
-                // Pass complete: new pass + clear played, then retry once.
-                session.reshuffle()
-                _playedKeys.value = emptySet()
-                emit("Artist pass complete — starting a new pass")
-                key = session.next(_playedKeys.value)
+            var key: String? = null
+            if (session != null) {
+                var excluded = _playedKeys.value
+                while (true) {
+                    val k = session.next(excluded) ?: break
+                    if (k !in skipped) {
+                        key = k
+                        break
+                    }
+                    excluded = excluded + k
+                }
+                if (key == null) {
+                    // Pass complete → new pass + clear played, then retry once.
+                    session.reshuffle()
+                    _playedKeys.value = emptySet()
+                    emit("Artist pass complete — starting a new pass")
+                    excluded = setOfNotNull(queue.getOrNull(queueIndex)?.trackKey)
+                    while (true) {
+                        val k = session.next(excluded) ?: break
+                        if (k !in skipped) {
+                            key = k
+                            break
+                        }
+                        excluded = excluded + k
+                    }
+                }
             }
             if (key == null) {
                 persistPlaybackProgress()
                 player.pause()
+                if (!auto) emit("No more songs to play")
                 return
             }
             val entry = queue.find { it.trackKey == key } ?: queueEntryForKey(key)
             if (entry == null) {
                 persistPlaybackProgress()
                 player.pause()
+                if (!auto) emit("Cannot load the next song")
                 return
             }
             queue = queue + entry
@@ -2074,7 +2136,11 @@ class AppState(
             persistPlaybackProgress()
             return
         }
-        val target = queueIndex + delta
+        var target = queueIndex + delta
+        if (delta > 0) {
+            // Skip rows the user marked s/d — next must jump over them (S7).
+            while (target in queue.indices && queue[target].trackKey in skipped) target++
+        }
         if (auto && target > queue.lastIndex && mode == PlaybackMode.SHUFFLE) {
             // Exhausted this shuffle cycle — reshuffle all tracks for a new pass.
             val byKey = queue.associateBy { it.trackKey }
@@ -2082,9 +2148,13 @@ class AppState(
             if (newQueue.isNotEmpty()) {
                 queue = newQueue
                 persistPlaybackProgress()
-                playAt(0)
-                emit("Shuffle cycle complete — starting a new pass")
-                return
+                var start = 0
+                while (start in queue.indices && queue[start].trackKey in skipped) start++
+                if (start in queue.indices) {
+                    playAt(start)
+                    emit("Shuffle cycle complete — starting a new pass")
+                    return
+                }
             }
         }
         if (target !in queue.indices) {
@@ -2092,6 +2162,8 @@ class AppState(
                 persistPlaybackProgress()
                 player.pause()
                 // Keep queue + index so the user can resume from here.
+            } else {
+                emit("End of queue")
             }
             return
         }

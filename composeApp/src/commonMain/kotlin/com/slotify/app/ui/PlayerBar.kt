@@ -1,5 +1,6 @@
 package com.slotify.app.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
@@ -30,7 +32,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -91,31 +97,34 @@ fun PlayerBar(state: AppState) {
             Spacer(Modifier.width(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 IconButton(onClick = { state.cyclePlaybackMode() }) {
-                    Box {
-                        Icon(
-                            Icons.Default.Shuffle,
-                            contentDescription = when (playbackMode) {
-                                PlaybackMode.LINEAR -> "Mode: linear"
-                                PlaybackMode.SHUFFLE -> "Mode: shuffle"
-                                PlaybackMode.ARTIST_2 -> "Mode: artist shuffle, 2 per artist"
-                                PlaybackMode.ARTIST_ALL -> "Mode: artist shuffle, all per artist"
-                            },
-                            tint = if (playbackMode == PlaybackMode.LINEAR) {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            } else {
-                                MaterialTheme.colorScheme.primary
-                            },
-                        )
-                        if (playbackMode.isArtistMode()) {
-                            Text(
-                                text = if (playbackMode == PlaybackMode.ARTIST_2) "2" else "★",
-                                color = MaterialTheme.colorScheme.primary,
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .offset(x = 6.dp, y = 5.dp),
+                    if (playbackMode == PlaybackMode.LINEAR) {
+                        // Two non-crossing lines: clearly "straight / not shuffled".
+                        Box(modifier = Modifier.semantics { contentDescription = "Mode: linear" }) {
+                            LinearModeIcon(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    } else {
+                        Box {
+                            Icon(
+                                Icons.Default.Shuffle,
+                                contentDescription = when (playbackMode) {
+                                    PlaybackMode.SHUFFLE -> "Mode: shuffle"
+                                    PlaybackMode.ARTIST_2 -> "Mode: artist shuffle, 2 per artist"
+                                    PlaybackMode.ARTIST_ALL -> "Mode: artist shuffle, all per artist"
+                                    PlaybackMode.LINEAR -> "Mode: linear"
+                                },
+                                tint = MaterialTheme.colorScheme.primary,
                             )
+                            if (playbackMode.isArtistMode()) {
+                                Text(
+                                    text = if (playbackMode == PlaybackMode.ARTIST_2) "2" else "★",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .offset(x = 6.dp, y = 5.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -142,6 +151,30 @@ fun PlayerBar(state: AppState) {
             )
         }
         Spacer(Modifier.height(2.dp))
+    }
+}
+
+/** Two parallel non-crossing lines — the "linear / not shuffled" mode glyph. */
+@Composable
+private fun LinearModeIcon(tint: Color) {
+    Canvas(modifier = Modifier.size(24.dp)) {
+        val stroke = 2.dp.toPx()
+        val left = 3.dp.toPx()
+        val right = 21.dp.toPx()
+        drawLine(
+            color = tint,
+            start = Offset(left, 9.dp.toPx()),
+            end = Offset(right, 9.dp.toPx()),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = tint,
+            start = Offset(left, 15.dp.toPx()),
+            end = Offset(right, 15.dp.toPx()),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
     }
 }
 
