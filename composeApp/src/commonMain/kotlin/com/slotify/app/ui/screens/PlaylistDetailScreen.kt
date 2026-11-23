@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -285,7 +286,8 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
                             color = MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            text = "No local file yet — link a file or fetch from YouTube",
+                            text = "No local file yet — link a file, fetch from YouTube, " +
+                                "or swipe the row left to remove it",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -384,9 +386,52 @@ private fun UnmatchedRow(
     onFindOnYoutube: (com.slotify.app.model.RemoteTrack) -> Unit,
     onLinkFile: (com.slotify.app.model.RemoteTrack) -> Unit,
 ) {
+    var dragOffsetX by remember { mutableFloatStateOf(0f) }
+    var pendingDelete by remember { mutableStateOf(false) }
+
+    // Swipe left → confirm → remove this row from the playlist (audio kept).
+    val swipeToDelete = Modifier
+        .offset { IntOffset(dragOffsetX.roundToInt(), 0) }
+        .pointerInput(playlistId, row.remote) {
+            val threshold = 96.dp.toPx()
+            var startX = 0f
+            var swiped = false
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull() ?: continue
+                    val pressed = change.pressed
+                    if (pressed && !change.previousPressed) {
+                        startX = change.position.x
+                        swiped = false
+                        dragOffsetX = 0f
+                    }
+                    if (pressed) {
+                        val dx = change.position.x - startX
+                        if (dx < 0f) {
+                            dragOffsetX = dx.coerceAtLeast(-threshold * 1.5f)
+                            if (dx <= -threshold) {
+                                if (!swiped) {
+                                    swiped = true
+                                    change.consume()
+                                    dragOffsetX = 0f
+                                    pendingDelete = true
+                                } else {
+                                    change.consume()
+                                }
+                            }
+                        }
+                    } else if (change.previousPressed) {
+                        dragOffsetX = 0f
+                    }
+                }
+            }
+        }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(swipeToDelete)
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -436,6 +481,31 @@ private fun UnmatchedRow(
                 Text("YouTube", style = MaterialTheme.typography.labelMedium)
             }
         }
+    }
+
+    if (pendingDelete) {
+        AlertDialog(
+            onDismissRequest = { pendingDelete = false },
+            title = { Text("Remove from playlist?") },
+            text = {
+                Text(
+                    text = "“${row.remote.name}” will be removed from this playlist. " +
+                        "The audio file itself is not deleted.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.deletePlaylistRow(playlistId, Matcher.trackKey(row.remote))
+                    pendingDelete = false
+                }) {
+                    Text("Remove", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = false }) { Text("Cancel") }
+            },
+        )
     }
 }
 

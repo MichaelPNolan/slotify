@@ -1597,6 +1597,31 @@ class AppState(
         repository.savePlaylists(_playlists.value)
     }
 
+    /** Remove one track from a playlist (metadata only — never deletes audio). */
+    fun deletePlaylistRow(playlistId: String, trackKey: String) {
+        val playlist = _playlists.value.firstOrNull { it.id == playlistId } ?: return
+        val removed = playlist.remote.tracks.find { Matcher.trackKey(it) == trackKey }
+            ?: return
+        val newTracks = playlist.remote.tracks.filterNot { Matcher.trackKey(it) == trackKey }
+        _playlists.value = _playlists.value.map { pl ->
+            if (pl.id != playlistId) pl else pl.copy(
+                remote = pl.remote.copy(tracks = newTracks, trackCount = newTracks.size),
+                resolvedTracks = pl.resolvedTracks.filterNot { Matcher.trackKey(it.remote) == trackKey },
+            )
+        }
+        // Drop any pin for the removed row so it can't dangle.
+        if (_manualLinks.value.byPlaylist[playlistId]?.containsKey(trackKey) == true) {
+            _manualLinks.value = _manualLinks.value.remove(playlistId, trackKey)
+            scope.launch {
+                withContext(Dispatchers.IO) { repository.saveManualLinks(_manualLinks.value) }
+            }
+        }
+        scope.launch {
+            withContext(Dispatchers.IO) { repository.savePlaylists(_playlists.value) }
+        }
+        emit("Removed \"${removed.name}\" from \"${playlist.name}\"")
+    }
+
     /**
      * Remove every row marked [RowMark.DELETE] from this playlist
      * (remote list + resolved rows so a later rematch won’t resurrect them).
