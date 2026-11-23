@@ -1460,7 +1460,12 @@ class AppState(
         var links = _manualLinks.value
         for ((plId, keys) in keysByPlaylist) {
             for (key in keys) {
-                if (links.byPlaylist[plId]?.containsKey(key) == true) {
+                // Only drop the pin if the PINNED path is dead too — a pin that
+                // already points at a live file (e.g. updated by a rename)
+                // should re-source the row on the rematch below.
+                val pinPath = links.byPlaylist[plId]?.get(key) ?: continue
+                if (pinPath.startsWith("content://")) continue
+                if (!java.io.File(pinPath).isFile) {
                     links = links.remove(plId, key)
                     linksChanged = true
                 }
@@ -1471,7 +1476,12 @@ class AppState(
             scope.launch { withContext(Dispatchers.IO) { repository.saveManualLinks(links) } }
         }
         scope.launch { withContext(Dispatchers.IO) { repository.savePlaylists(_playlists.value) } }
-        emit("Broken file link cleared — track moved to To be sourced")
+        // Re-match affected playlists right away: rows whose pin already points
+        // at a live file re-source; rows with nothing left become unsourced.
+        scope.launch {
+            keysByPlaylist.keys.forEach { id -> matchPlaylist(id) }
+        }
+        emit("Broken file link cleared — re-matching affected playlists")
     }
 
     /**
