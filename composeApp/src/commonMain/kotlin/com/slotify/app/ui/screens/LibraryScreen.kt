@@ -1,5 +1,6 @@
 package com.slotify.app.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -13,12 +14,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -28,20 +34,34 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.slotify.app.model.LocalTrack
+import com.slotify.app.model.RowMark
 import com.slotify.app.state.AppState
+import com.slotify.app.ui.AddToPlaylistDialog
+import com.slotify.app.ui.MarkChip
 import com.slotify.app.ui.formatMs
+import kotlinx.coroutines.launch
 
 @Composable
 fun LibraryScreen(state: AppState) {
     val library by state.library.collectAsState()
     val scanStatus by state.scanStatus.collectAsState()
+    val nowPlaying by state.nowPlaying.collectAsState()
+    val playedKeys by state.playedKeys.collectAsState()
+    val playerSnap by state.player.snapshot.collectAsState()
+    val playlists by state.playlists.collectAsState()
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
+    var addTarget by remember { mutableStateOf<LocalTrack?>(null) }
 
     val filtered = remember(library, query) {
         if (query.isBlank()) library
@@ -69,6 +89,26 @@ fun LibraryScreen(state: AppState) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            FilledTonalButton(
+                onClick = {
+                    val path = nowPlaying?.path
+                    if (path == null) {
+                        state.showMessage("Nothing playing")
+                        return@FilledTonalButton
+                    }
+                    val idx = filtered.indexOfFirst { it.filePath == path }
+                    if (idx < 0) {
+                        state.showMessage("Playing track is hidden by search")
+                    } else {
+                        scope.launch { listState.animateScrollToItem(idx) }
+                    }
+                },
+            ) {
+                Icon(Icons.Default.MyLocation, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Find current")
+            }
+            Spacer(Modifier.width(8.dp))
             FilledTonalButton(onClick = { state.scanLibrary() }) {
                 Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
@@ -115,13 +155,36 @@ fun LibraryScreen(state: AppState) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
+                state = listState,
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
             ) {
                 itemsIndexed(filtered, key = { _, it -> it.filePath }) { index, track ->
+                    val isCurrent = nowPlaying?.path == track.filePath
+                    val isPlayed = track.filePath in playedKeys
+                    val markDimmed = track.mark != null
+                    val titleColor = when {
+                        isCurrent -> MaterialTheme.colorScheme.surface
+                        track.mark == RowMark.DELETE -> MaterialTheme.colorScheme.error
+                        isPlayed || markDimmed ->
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                        else -> MaterialTheme.colorScheme.onSurface
+                    }
+                    val subColor = when {
+                        isCurrent -> MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
+                        track.mark == RowMark.DELETE ->
+                            MaterialTheme.colorScheme.error.copy(alpha = 0.85f)
+                        isPlayed || markDimmed ->
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { state.playLibrary(filtered, index) }
+                            .background(
+                                if (isCurrent) MaterialTheme.colorScheme.onSurface
+                                else Color.Transparent,
+                            )
+                            .clickable { state.requestLibraryPick(filtered, index) }
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -130,6 +193,7 @@ fun LibraryScreen(state: AppState) {
                                 text = track.displayTitle,
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Medium,
+                                color = titleColor,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -139,7 +203,7 @@ fun LibraryScreen(state: AppState) {
                                     track.album?.let { append(" · ").append(it) }
                                 },
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = subColor,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -148,17 +212,58 @@ fun LibraryScreen(state: AppState) {
                         Text(
                             text = track.durationMs?.let { formatMs(it) } ?: "—",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = subColor,
                         )
                         Spacer(Modifier.width(8.dp))
-                        Icon(
-                            Icons.Default.PlayArrow,
-                            contentDescription = "Play",
-                            tint = MaterialTheme.colorScheme.primary,
+                        MarkChip(
+                            mark = track.mark,
+                            onClick = { state.cycleLibraryRowMark(track.filePath) },
                         )
+                        Spacer(Modifier.width(4.dp))
+                        IconButton(onClick = { addTarget = track }) {
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = "Add to playlist",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        val showStop = isCurrent && playerSnap.isPlaying
+                        IconButton(
+                            onClick = {
+                                if (isCurrent) state.togglePlay()
+                                else state.requestLibraryPick(filtered, index)
+                            },
+                        ) {
+                            Icon(
+                                imageVector = if (showStop) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                contentDescription = if (showStop) "Stop" else "Play",
+                                tint = if (showStop) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                },
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+
+    addTarget?.let { track ->
+        AddToPlaylistDialog(
+            track = track,
+            playlists = playlists.filterNot { it.trashed },
+            onCreate = { name ->
+                state.createPlaylistWithTrack(name, track)
+                addTarget = null
+            },
+            onAdd = { playlistId ->
+                state.addToPlaylist(playlistId, track)
+                addTarget = null
+            },
+            onDismiss = { addTarget = null },
+        )
     }
 }
