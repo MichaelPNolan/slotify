@@ -12,10 +12,15 @@ import com.slotify.app.library.writeAudioMetadata
 import com.slotify.app.match.Matcher
 import com.slotify.app.model.AppPlaylist
 import com.slotify.app.model.LocalTrack
+import com.slotify.app.model.PlaylistSource
+import com.slotify.app.model.RemoteArtist
+import com.slotify.app.model.RemotePlaylist
 import com.slotify.app.model.RemoteTrack
 import com.slotify.app.model.ResolvedPlaylistTrack
 import com.slotify.app.model.RowMark
+import com.slotify.app.model.TrackMatch
 import com.slotify.app.model.cycleMark
+import com.slotify.app.platform.nowEpochMs
 import com.slotify.app.platform.pickAudioFile
 import com.slotify.app.platform.readBrowserSpDcCookie
 import com.slotify.app.platform.hasSharedMusicWriteAccess
@@ -1265,6 +1270,68 @@ class AppState(
             withContext(Dispatchers.IO) { repository.saveLibrary(_library.value) }
         }
     }
+
+    /** Short UI message for controls without a status line (S9 Find current). */
+    fun showMessage(text: String) = emit(text)
+
+    /** Create a new playlist containing [track] as an accepted match (S8). */
+    fun createPlaylistWithTrack(name: String, track: LocalTrack) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        val remoteTrack = localToRemote(track)
+        val playlist = AppPlaylist(
+            remote = RemotePlaylist(
+                id = "local-${nowEpochMs()}",
+                name = trimmed,
+                trackCount = 1,
+                tracks = listOf(remoteTrack),
+            ),
+            resolvedTracks = listOf(
+                ResolvedPlaylistTrack(
+                    remoteTrack,
+                    TrackMatch(track, confidence = 1.0, isManual = true),
+                ),
+            ),
+            importedAtEpochMs = nowEpochMs(),
+            source = PlaylistSource.JSON,
+        )
+        _playlists.value = _playlists.value + playlist
+        scope.launch {
+            withContext(Dispatchers.IO) { repository.savePlaylists(_playlists.value) }
+            emit("Created \"$trimmed\"")
+        }
+    }
+
+    /** Append [track] to an existing playlist as an accepted match (S8). */
+    fun addToPlaylist(playlistId: String, track: LocalTrack) {
+        val playlist = _playlists.value.find { it.id == playlistId } ?: return
+        if (playlist.resolvedTracks.any { it.match?.local?.filePath == track.filePath }) {
+            emit("\"${playlist.name}\" already has this song")
+            return
+        }
+        val remoteTrack = localToRemote(track)
+        val newTracks = playlist.remote.tracks + remoteTrack
+        _playlists.value = _playlists.value.map { pl ->
+            if (pl.id != playlistId) pl else pl.copy(
+                remote = pl.remote.copy(tracks = newTracks, trackCount = newTracks.size),
+                resolvedTracks = pl.resolvedTracks + ResolvedPlaylistTrack(
+                    remoteTrack,
+                    TrackMatch(track, confidence = 1.0, isManual = true),
+                ),
+            )
+        }
+        scope.launch {
+            withContext(Dispatchers.IO) { repository.savePlaylists(_playlists.value) }
+            emit("Added to \"${playlist.name}\"")
+        }
+    }
+
+    private fun localToRemote(track: LocalTrack) = RemoteTrack(
+        name = track.displayTitle,
+        artists = listOf(RemoteArtist(name = track.displayArtist)),
+        albumName = track.album,
+        durationMs = track.durationMs,
+    )
 
     fun setPlaylistRowMark(playlistId: String, trackKey: String, mark: RowMark?) {
         _playlists.value = _playlists.value.map { pl ->
