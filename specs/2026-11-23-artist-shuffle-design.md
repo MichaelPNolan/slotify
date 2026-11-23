@@ -75,7 +75,7 @@ Four playback modes cycled from the player-bar shuffle icon (Linear, Shuffle, Ar
 ## [S10] Playlist row badge changes
 
 - **"Linked" chip removed** entirely from playlist detail rows (`unlinkTrackFile` stays in AppState, unused from UI).
-- **Percentage chip becomes tappable**: tap = confirm this match is acceptable → pin it (`isManual = true` via the existing pin mechanism) → the badge disappears from that row (manual rows show no chip).
+- **Percentage chip becomes tappable**: tap = confirm this match is acceptable → pin it by re-using `linkTrackToFile` with the row's existing match path (sets `isManual = true`) → the badge disappears from that row (manual rows show no chip).
 - Re-picking a different file stays on the existing search/re-match button — no new control.
 
 ## [S11] Persistence and restart
