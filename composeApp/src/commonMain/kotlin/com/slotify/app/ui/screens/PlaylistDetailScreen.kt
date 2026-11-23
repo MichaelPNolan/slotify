@@ -60,6 +60,7 @@ import com.slotify.app.state.AppState
 import com.slotify.app.ui.MarkChip
 import com.slotify.app.ui.formatMs
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 @Composable
@@ -495,9 +496,11 @@ private fun MatchedRow(
         .offset { IntOffset(dragOffsetX.roundToInt(), 0) }
         .pointerInput(playlistId, originalIndex, row.remote) {
             val threshold = 96.dp.toPx()
+            val tapSlop = viewConfiguration.touchSlop
             val holdMs = 5_000L
             var downTime = 0L
             var startX = 0f
+            var startY = 0f
             var holdFired = false
             var swiped = false
 
@@ -512,6 +515,7 @@ private fun MatchedRow(
                     if (justDown) {
                         downTime = change.uptimeMillis
                         startX = change.position.x
+                        startY = change.position.y
                         holdFired = false
                         swiped = false
                         redoFired = false
@@ -520,7 +524,12 @@ private fun MatchedRow(
 
                     if (pressed) {
                         val held = change.uptimeMillis - downTime
-                        if (!holdFired && held >= holdMs) {
+                        val dx = change.position.x - startX
+                        val dy = change.position.y - startY
+                        // Only a stationary finger may trigger hold-to-refetch —
+                        // scrolling must never count as a hold.
+                        val moved = abs(dx) > tapSlop || abs(dy) > tapSlop
+                        if (!holdFired && !moved && held >= holdMs) {
                             holdFired = true
                             redoFired = true
                             change.consume()
@@ -528,7 +537,6 @@ private fun MatchedRow(
                             onRedoYoutube()
                             continue
                         }
-                        val dx = change.position.x - startX
                         if (!holdFired && dx < 0f) {
                             dragOffsetX = dx.coerceAtLeast(-threshold * 1.5f)
                             if (dx <= -threshold) {
@@ -546,8 +554,14 @@ private fun MatchedRow(
                     } else if (justUp) {
                         val held = change.uptimeMillis - downTime
                         val totalDx = change.position.x - startX
+                        val totalDy = change.position.y - startY
                         dragOffsetX = 0f
-                        if (!redoFired && !holdFired && !swiped && held < holdMs && totalDx > -threshold) {
+                        // A tap moves neither axis beyond touch slop — vertical
+                        // drag-scrolling must not count as a pick.
+                        val isTap = !redoFired && !holdFired && !swiped &&
+                            held < holdMs &&
+                            abs(totalDx) <= tapSlop && abs(totalDy) <= tapSlop
+                        if (isTap) {
                             state.requestPlaylistPick(playlistId, originalIndex)
                         }
                         redoFired = false
