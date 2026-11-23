@@ -18,6 +18,8 @@ data class AppSettings(
     val matchThreshold: Double = 0.75,
     /** App output volume, 0.0–1.0. Persists across launches. */
     val volume: Float = 1.0f,
+    /** Legal notice acknowledged — suppresses the first-run dialog. */
+    val disclaimerAccepted: Boolean = false,
 )
 
 /** Resume point for one playlist (survives app restart). */
@@ -34,6 +36,8 @@ data class PlaylistProgress(
 data class PlaybackStore(
     val activePlaylistId: String? = null,
     val shuffle: Boolean = false,
+    /** [com.slotify.app.playback.PlaybackMode].name — "" on legacy files. */
+    val mode: String = "",
     val byPlaylist: Map<String, PlaylistProgress> = emptyMap(),
 )
 
