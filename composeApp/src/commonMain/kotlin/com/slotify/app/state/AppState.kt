@@ -114,6 +114,20 @@ data class FixNamesSession(
 }
 
 /**
+ * True when [pinPath] is not indexed yet under [have] (the index's file paths).
+ * Pins are often stored in a different spelling than the index — e.g.
+ * `/sdcard/Music/x` while the index holds the canonical
+ * `/storage/emulated/0/Music/x` — so a raw-string check alone re-appended the
+ * pin on every rematch and duplicated the library row (which crashed the
+ * Library list's key uniqueness check).
+ */
+internal fun pinNeedsIndex(pinPath: String, have: Set<String>): Boolean {
+    if (pinPath in have) return false
+    val canonical = runCatching { java.io.File(pinPath).canonicalPath }.getOrDefault(pinPath)
+    return canonical !in have
+}
+
+/**
  * Central app controller: owns all state, performs IO/Spotify/matching work
  * on a background scope, and exposes StateFlows for the Compose UI.
  */
@@ -1272,7 +1286,7 @@ class AppState(
             var added = false
             var dropped = false
             for (path in links.values.distinct()) {
-                if (path in have) continue
+                if (!pinNeedsIndex(path, have)) continue
                 if (!java.io.File(path).isFile) {
                     _manualLinks.value = _manualLinks.value.let { l ->
                         var next = l
@@ -1287,6 +1301,7 @@ class AppState(
                     continue
                 }
                 val t = runCatching { scanner.readTrack(path) }.getOrNull() ?: continue
+                have.add(t.filePath)
                 locals = locals + t
                 added = true
             }

@@ -120,7 +120,9 @@ class AppRepository {
 
     fun loadLibrary(): List<LocalTrack> = runCatching {
         AppFiles.readTextOrNull(LIBRARY_FILE)?.let {
-            json.decodeFromString<List<LocalTrack>>(it)
+            // distinctBy: heal duplicate rows the pre-fix pin re-append wrote —
+            // a duplicate path crashes LazyColumn's key uniqueness check.
+            json.decodeFromString<List<LocalTrack>>(it).distinctBy { track -> track.filePath }
         } ?: emptyList()
     }.getOrDefault(emptyList())
 

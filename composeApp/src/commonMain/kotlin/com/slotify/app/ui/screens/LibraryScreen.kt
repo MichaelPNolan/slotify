@@ -73,11 +73,15 @@ fun LibraryScreen(state: AppState) {
         if (isDragged && followEnabled) state.releaseLibraryFollow()
     }
 
-    val filtered = remember(library, query) {
-        if (query.isBlank()) library
+    // Unique-by-path view: a duplicate index row must not crash LazyColumn's
+    // key uniqueness check (a data bug there kills the whole app).
+    val base = remember(library) { library.distinctBy { it.filePath } }
+
+    val filtered = remember(base, query) {
+        if (query.isBlank()) base
         else {
             val q = query.trim().lowercase()
-            library.filter {
+            base.filter {
                 it.displayTitle.lowercase().contains(q) || it.displayArtist.lowercase().contains(q)
             }
         }
@@ -101,7 +105,7 @@ fun LibraryScreen(state: AppState) {
             Column(modifier = Modifier.weight(1f)) {
                 Text("Library", style = MaterialTheme.typography.headlineSmall)
                 Text(
-                    text = "${library.size} file(s)" +
+                    text = "${base.size} file(s)" +
                         if (query.isNotBlank()) " · ${filtered.size} match(es)" else "",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
