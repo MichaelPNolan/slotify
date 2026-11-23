@@ -7,32 +7,43 @@ Source of truth for long-lived notes: project memory `MEMORY.md` under MiMoCode�
 
 ---
 
-## Switching stations (start here)
+## Catch-up on this station (0.0.3 already local)
 
-On a **new host**, after `git clone` + `git checkout 0.0.3`:
+This host **already has the repo on `0.0.3`** — no re-clone. To get the latest:
 
-1. **Read `README.md`** for packages (JDK 21, Android SDK `platforms;android-37.0`, yt-dlp, ffmpeg, VLC) and first build.
-2. **Edit `env.sh`** — `JAVA_HOME` / `ANDROID_HOME` are paths from the *previous* machine (last known: `~/tools/jdk-21.0.13+9`, `~/tools/android-sdk`). Your unpack dir will differ.
-3. **Rebuild agent tooling:** `cd .mimocode && npm install` (manifests are committed; `node_modules/` is not).
-4. **Smoke-check:**
-   ```bash
-   source env.sh
-   ./gradlew :composeApp:desktopTest --console=plain
-   ./gradlew :androidApp:assembleDebug --console=plain
-   ./run.sh   # optional GUI
-   ```
-5. **Runtime data does not clone** (by design). Recreate or copy when needed:
-   | Data | Where |
-   |------|--------|
-   | Playlists, library index, pins, playback | Desktop `~/.local/share/slotify/` · Android app `filesDir` |
-   | Portable transfer copy | Music root `playlists.json` + `manual_links.json` |
-   | Spotify Client ID | Settings field (not in git; `spotify-app.txt` gitignored) |
-   | Floorp `sp_dc` | This host’s browser profile only — re-probe via Settings |
-   | SAF Music tree grant | Phone only (`SafMusic` prefs + system persisted permissions) |
-   | MiMoCode session/project memory | `…/mimocode/memory/` on the **old** machine — not in git; `HANDOFF.md` is the portable catch-up |
-6. **Do not** re-init git, force-push, or change the remote/branch unless the user asks.
+```bash
+cd <slotify>
+git pull --ff-only        # or: git fetch origin && git merge --ff-only origin/0.0.3
+git log --oneline -5      # tip should be 0fe3fd4 or newer
+```
 
-**Not device-verified on a fresh install until you say so:** Android YouTube fetch, Android Link file (SAF tree grant), phone transfer, batch fetch. Treat “in HANDOFF” as coded, not proven on that handset.
+Then `source env.sh` (verify `JAVA_HOME` matches **this** machine’s JDK) and re-run tests if anything looks off:
+
+```bash
+./gradlew :composeApp:desktopTest --console=plain
+./gradlew :androidApp:assembleDebug --console=plain
+```
+
+### What changed since you last worked here (`b0f09ec` → `0fe3fd4`)
+
+| Commit | Theme |
+|--------|--------|
+| `b0f09ec` | Android Link file SAF path resolve + cross-platform fuzzy (filename axis) |
+| **`0fe3fd4`** (this handoff) | **Android yt-dlp**, **Spotify download naming/tags**, **SAF Music-tree picker**, README/HANDOFF refresh |
+
+**Feature detail (`0fe3fd4`):**
+
+1. **Android YouTube is real** — `dev.ffmpegkit-maintained:yt-dlp-android:2.0.2` (Chaquopy) + `ffmpeg-kit-audio`. Desktop still uses **system `yt-dlp`** (`YoutubeDlpSource`) — do not “unify” them. Helper Python `slotify_ytdlp.py` lives in app `filesDir` (stock runner can’t dump search JSON). Remux only (`-c:a copy`) into whitelist ext. ABIs **arm64-v8a + x86_64**. Debug APK ~66MB.
+
+2. **Downloads named/tagged from Spotify, not YouTube** — when a playlist row is known: file → `Artist - Title` via `preferredDownloadBaseName`, tags overwritten via `writeAudioMetadata` (jaudiotagger, both platforms). Fixes fuzzy match against YouTube title/channel. Older downloads still wrong — re-fetch/re-link those rows.
+
+3. **Android Link file = SAF tree** — first use: grant Music folder once (`SafMusic`, persisted). Document picker opens **inside** Music (`EXTRA_INITIAL_URI`). Unresolvable picks keep `content://` (player + scanner + matcher handle URI; `LocalTrack.nameForFilenameParse` uses `displayPath`). No forced copy into Slotify.
+
+4. **New files:** `YoutubeSource.android.kt` (rewritten), `SafMusic.kt`, `OpenDocumentInMusic.kt`, `AudioMetadata.kt` + desktop/android actuals, `PreferredDownloadBaseNameTest`. Deps in `gradle/libs.versions.toml`. `env.sh` JDK path on the **other** host was `jdk-21.0.13+9` — confirm yours.
+
+**Still not device-proven until the user says so:** Android YouTube, SAF Link file grant, phone transfer, batch fetch.
+
+**Runtime state** (this station’s, not in git): `~/.local/share/slotify/`, Floorp `sp_dc`, Spotify Client ID in Settings, phone SAF grant. MiMoCode memory may lag — this file is the in-repo catch-up.
 
 ---
 
@@ -172,7 +183,7 @@ SLOTIFY_DEMO=1 ./run.sh           # demo fixtures
 
 - Original authoring host: Manjaro x86_64, KDE Wayland; Floorp; ffmpeg n9.0.1; yt-dlp 2026.08.19; VLC 3.0.23.
 - Previous host (CachyOS): yt-dlp 2026.08.19, ffmpeg n9.0.2, libvlc 3.0.23 + `vlc-plugins-base`. JDK 21 at `~/tools/jdk-21.0.13+9` (see `env.sh`); Android SDK at `~/tools/android-sdk` with `platforms;android-37.0` + `build-tools;35.0.0`.
-- **Next host:** re-measure tool versions; update this section and `env.sh` after first successful build.
+- This host: re-measure tool versions after first successful build; update this section and `env.sh` if `JAVA_HOME` differs from what’s committed.
 - Library: `/home/owner/Music` (~98 files post-whitelist on original host; 40 `.m4a` excluded by design). Android default root `/sdcard/Music` (single path — do not also add `/storage/emulated/0/Music` or files double-count before canonicalization).
 
 Do **not** commit: `spotify-app.txt`, `~/.local/share/slotify/*` / Android `filesDir` JSON, cookies, Client IDs in notes if avoidable (Client ID in Settings is public-ish for PKCE but still machine state).
@@ -197,6 +208,6 @@ npm install            # restores @mimo-ai/plugin from package.json / package-lo
 - Declared dep: **`@mimo-ai/plugin`** (see `.mimocode/package.json`).
 - `.cron-lock` and `node_modules/` are machine-local — ignore or delete; do not commit.
 - After install, run MiMoCode from the project root as usual. Session/project memory lives under the MiMoCode data directory (`…/mimocode/memory/`), **not** in this repo — this file is the portable catch-up; live memory may be newer on the original machine.
-- **Station switch:** project memory will **not** follow you. After clone, tell the new session to read `HANDOFF.md` + `README.md` first. Optionally copy `MEMORY.md` by hand from the old host if you want history.
+- **Station switch:** project memory does **not** follow the repo. New session should start from `HANDOFF.md` (+ `README.md` for setup). Optionally copy `MEMORY.md` by hand from the other host if you want history.
 
 If `npm install` fails offline: use the lockfile’s resolved tarball URL or reinstall the plugin package version above only.
