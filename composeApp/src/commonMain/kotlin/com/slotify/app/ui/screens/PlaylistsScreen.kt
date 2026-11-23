@@ -59,6 +59,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.slotify.app.platform.readClipboardText
 import com.slotify.app.state.AppState
+import com.slotify.app.ui.CoverBackdrop
 import com.slotify.app.state.SpotifyStatus
 import kotlinx.coroutines.launch
 
@@ -325,125 +326,126 @@ fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
         }
 
         if (playlists.isNotEmpty()) {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(playlists, key = { it.id }) { playlist ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { state.openPlaylist(playlist.id) },
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (playlist.markedForDelete) {
-                                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f)
-                            } else {
-                                MaterialTheme.colorScheme.surfaceContainerHigh
-                            },
-                        ),
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                Icons.Default.MusicNote,
-                                contentDescription = null,
-                                tint = if (playlist.markedForDelete) {
-                                    MaterialTheme.colorScheme.error
+            Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                CoverBackdrop(state)
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(playlists, key = { it.id }) { playlist ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { state.openPlaylist(playlist.id) },
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (playlist.markedForDelete) {
+                                    MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f)
                                 } else {
-                                    MaterialTheme.colorScheme.primary
+                                    MaterialTheme.colorScheme.surfaceContainerHigh
                                 },
-                                modifier = Modifier.size(40.dp),
-                            )
-                            Spacer(Modifier.width(12.dp))
-                            val total = playlist.resolvedTracks.size
-                            val matched = playlist.matchedCount
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = playlist.name,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    color = if (playlist.markedForDelete) {
+                            ),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    Icons.Default.MusicNote,
+                                    contentDescription = null,
+                                    tint = if (playlist.markedForDelete) {
                                         MaterialTheme.colorScheme.error
                                     } else {
-                                        MaterialTheme.colorScheme.onSurface
+                                        MaterialTheme.colorScheme.primary
                                     },
+                                    modifier = Modifier.size(40.dp),
                                 )
-                                Text(
-                                    text = buildString {
-                                        append("$matched/$total matched")
-                                        if (playlist.markedForDelete) append(" · marked for delete")
-                                        if (shuffle && activePlaylistId == playlist.id) append(" · shuffle")
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = when {
-                                        playlist.markedForDelete -> MaterialTheme.colorScheme.error
-                                        total > 0 && matched == total -> MaterialTheme.colorScheme.tertiary
-                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                    },
-                                )
-                                playlist.remote.description?.takeIf { it.isNotBlank() }?.let {
+                                Spacer(Modifier.width(12.dp))
+                                val total = playlist.resolvedTracks.size
+                                val matched = playlist.matchedCount
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = it,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        text = playlist.name,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                            }
-                            // Mark / unmark for delete (same idea as track Del chip).
-                            SuggestionChip(
-                                onClick = { state.togglePlaylistMarkForDelete(playlist.id) },
-                                label = {
-                                    Text(
-                                        if (playlist.markedForDelete) "Marked" else "Mark",
-                                        style = MaterialTheme.typography.labelSmall,
-                                    )
-                                },
-                                colors = SuggestionChipDefaults.suggestionChipColors(
-                                    containerColor = if (playlist.markedForDelete) {
-                                        MaterialTheme.colorScheme.error.copy(alpha = 0.20f)
-                                    } else {
-                                        MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
-                                    },
-                                    labelColor = if (playlist.markedForDelete) {
-                                        MaterialTheme.colorScheme.error
-                                    } else {
-                                        MaterialTheme.colorScheme.outline
-                                    },
-                                ),
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            if (matched > 0) {
-                                val isThisPlaying =
-                                    activePlaylistId == playlist.id && playingNow
-                                IconButton(
-                                    onClick = { state.togglePlaylistPlay(playlist.id) },
-                                ) {
-                                    Icon(
-                                        imageVector = if (isThisPlaying) {
-                                            Icons.Default.Stop
-                                        } else {
-                                            Icons.Default.PlayArrow
-                                        },
-                                        contentDescription = if (isThisPlaying) {
-                                            "Stop"
-                                        } else {
-                                            "Play"
-                                        },
-                                        tint = if (isThisPlaying) {
+                                        color = if (playlist.markedForDelete) {
                                             MaterialTheme.colorScheme.error
                                         } else {
-                                            MaterialTheme.colorScheme.primary
+                                            MaterialTheme.colorScheme.onSurface
                                         },
                                     )
+                                    Text(
+                                        text = buildString {
+                                            append("$matched/$total matched")
+                                            if (playlist.markedForDelete) append(" · marked for delete")
+                                            if (shuffle && activePlaylistId == playlist.id) append(" · shuffle")
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = when {
+                                            playlist.markedForDelete -> MaterialTheme.colorScheme.error
+                                            total > 0 && matched == total -> MaterialTheme.colorScheme.tertiary
+                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                    )
+                                    playlist.remote.description?.takeIf { it.isNotBlank() }?.let {
+                                        Text(
+                                            text = it,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                                // Mark / unmark for delete (same idea as track Del chip).
+                                SuggestionChip(
+                                    onClick = { state.togglePlaylistMarkForDelete(playlist.id) },
+                                    label = {
+                                        Text(
+                                            if (playlist.markedForDelete) "Marked" else "Mark",
+                                            style = MaterialTheme.typography.labelSmall,
+                                        )
+                                    },
+                                    colors = SuggestionChipDefaults.suggestionChipColors(
+                                        containerColor = if (playlist.markedForDelete) {
+                                            MaterialTheme.colorScheme.error.copy(alpha = 0.20f)
+                                        } else {
+                                            MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
+                                        },
+                                        labelColor = if (playlist.markedForDelete) {
+                                            MaterialTheme.colorScheme.error
+                                        } else {
+                                            MaterialTheme.colorScheme.outline
+                                        },
+                                    ),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                if (matched > 0) {
+                                    val isThisPlaying =
+                                        activePlaylistId == playlist.id && playingNow
+                                    IconButton(
+                                        onClick = { state.togglePlaylistPlay(playlist.id) },
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isThisPlaying) {
+                                                Icons.Default.Stop
+                                            } else {
+                                                Icons.Default.PlayArrow
+                                            },
+                                            contentDescription = if (isThisPlaying) {
+                                                "Stop"
+                                            } else {
+                                                "Play"
+                                            },
+                                            tint = if (isThisPlaying) {
+                                                MaterialTheme.colorScheme.error
+                                            } else {
+                                                MaterialTheme.colorScheme.primary
+                                            },
+                                        )
+                                    }
                                 }
                             }
                         }

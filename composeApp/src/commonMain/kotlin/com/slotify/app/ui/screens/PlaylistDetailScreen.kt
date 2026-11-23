@@ -2,6 +2,7 @@ package com.slotify.app.ui.screens
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -56,6 +57,7 @@ import com.slotify.app.model.RemoteTrack
 import com.slotify.app.model.ResolvedPlaylistTrack
 import com.slotify.app.model.RowMark
 import com.slotify.app.state.AppState
+import com.slotify.app.ui.CoverBackdrop
 import com.slotify.app.ui.MarkChip
 import com.slotify.app.ui.formatMs
 import kotlinx.coroutines.launch
@@ -266,34 +268,74 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
         val matchedAll = playlist.resolvedTracks.withIndex().filter { it.value.isMatched }
         val matchedFiltered = matchedAll.filter { matchesFilter(it.value) }
 
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-        ) {
-            // ── To be sourced ────────────────────────────────────────
-            if (unmatchedAll.isNotEmpty()) {
-                item(key = "hdr-unmatched") {
+        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            CoverBackdrop(state)
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+            ) {
+                // ── To be sourced ────────────────────────────────────────
+                if (unmatchedAll.isNotEmpty()) {
+                    item(key = "hdr-unmatched") {
+                        Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                            Text(
+                                text = if (unmatchedFiltered.size == unmatchedAll.size) {
+                                    "To be sourced (${unmatchedAll.size})"
+                                } else {
+                                    "To be sourced (${unmatchedFiltered.size} of ${unmatchedAll.size})"
+                                },
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Text(
+                                text = "No local file yet — link a file, fetch from YouTube, " +
+                                    "or swipe the row left to remove it",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (unmatchedFiltered.isEmpty()) {
+                                Text(
+                                    text = "No unmatched rows match your search",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                    items(
+                        unmatchedFiltered,
+                        key = { (idx, row) -> "u-${row.remote.id ?: row.remote.name}-$idx" },
+                    ) { (_, row) ->
+                        UnmatchedRow(
+                            state = state,
+                            playlistId = playlist.id,
+                            row = row,
+                            onFindOnYoutube = { findTarget = it },
+                            onLinkFile = { linkTarget = it },
+                        )
+                    }
+                    item(key = "div-unmatched") {
+                        Spacer(Modifier.size(8.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.size(4.dp))
+                    }
+                }
+
+                // ── Matched ──────────────────────────────────────────────
+                item(key = "hdr-matched") {
                     Column(modifier = Modifier.padding(vertical = 4.dp)) {
                         Text(
-                            text = if (unmatchedFiltered.size == unmatchedAll.size) {
-                                "To be sourced (${unmatchedAll.size})"
+                            text = if (filter.isBlank()) {
+                                "Matched (${matchedAll.size})"
                             } else {
-                                "To be sourced (${unmatchedFiltered.size} of ${unmatchedAll.size})"
+                                "Matched (${matchedFiltered.size} of ${matchedAll.size})"
                             },
                             style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        Text(
-                            text = "No local file yet — link a file, fetch from YouTube, " +
-                                "or swipe the row left to remove it",
-                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        if (unmatchedFiltered.isEmpty()) {
+                        if (matchedAll.isNotEmpty() && state.youtube.isSupported) {
                             Text(
-                                text = "No unmatched rows match your search",
+                                text = "Hold 5s or swipe a row left to re-fetch from YouTube",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -301,77 +343,38 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
                     }
                 }
                 items(
-                    unmatchedFiltered,
-                    key = { (idx, row) -> "u-${row.remote.id ?: row.remote.name}-$idx" },
-                ) { (_, row) ->
-                    UnmatchedRow(
+                    matchedFiltered,
+                    key = { (idx, row) -> "m-${row.remote.id ?: row.remote.name}-$idx" },
+                ) { (index, row) ->
+                    MatchedRow(
                         state = state,
                         playlistId = playlist.id,
                         row = row,
-                        onFindOnYoutube = { findTarget = it },
-                        onLinkFile = { linkTarget = it },
-                    )
-                }
-                item(key = "div-unmatched") {
-                    Spacer(Modifier.size(8.dp))
-                    HorizontalDivider()
-                    Spacer(Modifier.size(4.dp))
-                }
-            }
-
-            // ── Matched ──────────────────────────────────────────────
-            item(key = "hdr-matched") {
-                Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                    Text(
-                        text = if (filter.isBlank()) {
-                            "Matched (${matchedAll.size})"
-                        } else {
-                            "Matched (${matchedFiltered.size} of ${matchedAll.size})"
+                        originalIndex = index,
+                        onRedoYoutube = {
+                            scope.launch {
+                                state.prepareRedoYoutubeMatch(
+                                    playlistId = playlist.id,
+                                    trackKey = Matcher.trackKey(row.remote),
+                                )
+                                findTarget = row.remote
+                            }
                         },
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    if (matchedAll.isNotEmpty() && state.youtube.isSupported) {
+                }
+                if (matchedFiltered.isEmpty() && unmatchedFiltered.isEmpty()) {
+                    item(key = "empty") {
                         Text(
-                            text = "Hold 5s or swipe a row left to re-fetch from YouTube",
-                            style = MaterialTheme.typography.bodySmall,
+                            text = if (filter.isNotBlank()) {
+                                "No tracks match “$filter”"
+                            } else {
+                                "Playlist has no tracks"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 16.dp),
                         )
                     }
-                }
-            }
-            items(
-                matchedFiltered,
-                key = { (idx, row) -> "m-${row.remote.id ?: row.remote.name}-$idx" },
-            ) { (index, row) ->
-                MatchedRow(
-                    state = state,
-                    playlistId = playlist.id,
-                    row = row,
-                    originalIndex = index,
-                    onRedoYoutube = {
-                        scope.launch {
-                            state.prepareRedoYoutubeMatch(
-                                playlistId = playlist.id,
-                                trackKey = Matcher.trackKey(row.remote),
-                            )
-                            findTarget = row.remote
-                        }
-                    },
-                )
-            }
-            if (matchedFiltered.isEmpty() && unmatchedFiltered.isEmpty()) {
-                item(key = "empty") {
-                    Text(
-                        text = if (filter.isNotBlank()) {
-                            "No tracks match “$filter”"
-                        } else {
-                            "Playlist has no tracks"
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 16.dp),
-                    )
                 }
             }
         }

@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -47,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import com.slotify.app.model.LocalTrack
 import com.slotify.app.model.RowMark
 import com.slotify.app.state.AppState
+import com.slotify.app.ui.CoverBackdrop
 import com.slotify.app.ui.AddToPlaylistDialog
 import com.slotify.app.ui.MarkChip
 import com.slotify.app.ui.formatMs
@@ -173,103 +175,104 @@ fun LibraryScreen(state: AppState) {
                 modifier = Modifier.padding(24.dp),
             )
         } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                state = listState,
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-            ) {
-                itemsIndexed(filtered, key = { _, it -> it.filePath }) { index, track ->
-                    val isCurrent = nowPlaying?.path == track.filePath
-                    val isPlayed = track.filePath in playedKeys
-                    val markDimmed = track.mark != null
-                    val titleColor = when {
-                        isCurrent -> MaterialTheme.colorScheme.surface
-                        track.mark == RowMark.DELETE -> MaterialTheme.colorScheme.error
-                        isPlayed || markDimmed ->
-                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
-                        else -> MaterialTheme.colorScheme.onSurface
-                    }
-                    val subColor = when {
-                        isCurrent -> MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
-                        track.mark == RowMark.DELETE ->
-                            MaterialTheme.colorScheme.error.copy(alpha = 0.85f)
-                        isPlayed || markDimmed ->
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(
-                                if (isCurrent) MaterialTheme.colorScheme.onSurface
-                                else Color.Transparent,
+            Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                CoverBackdrop(state)
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    state = listState,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                ) {
+                    itemsIndexed(filtered, key = { _, it -> it.filePath }) { index, track ->
+                        val isCurrent = nowPlaying?.path == track.filePath
+                        val isPlayed = track.filePath in playedKeys
+                        val markDimmed = track.mark != null
+                        val titleColor = when {
+                            isCurrent -> MaterialTheme.colorScheme.surface
+                            track.mark == RowMark.DELETE -> MaterialTheme.colorScheme.error
+                            isPlayed || markDimmed ->
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                            else -> MaterialTheme.colorScheme.onSurface
+                        }
+                        val subColor = when {
+                            isCurrent -> MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
+                            track.mark == RowMark.DELETE ->
+                                MaterialTheme.colorScheme.error.copy(alpha = 0.85f)
+                            isPlayed || markDimmed ->
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    if (isCurrent) MaterialTheme.colorScheme.onSurface
+                                    else Color.Transparent,
+                                )
+                                .clickable { state.requestLibraryPick(filtered, index) }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            MarkChip(
+                                mark = track.mark,
+                                onClick = { state.cycleLibraryRowMark(track.filePath) },
                             )
-                            .clickable { state.requestLibraryPick(filtered, index) }
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        MarkChip(
-                            mark = track.mark,
-                            onClick = { state.cycleLibraryRowMark(track.filePath) },
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Column(modifier = Modifier.weight(1f)) {
+                            Spacer(Modifier.width(6.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = track.displayTitle,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    color = titleColor,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = buildString {
+                                        append(track.displayArtist)
+                                        track.album?.let { append(" · ").append(it) }
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = subColor,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Spacer(Modifier.width(6.dp))
                             Text(
-                                text = track.displayTitle,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium,
-                                color = titleColor,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = buildString {
-                                    append(track.displayArtist)
-                                    track.album?.let { append(" · ").append(it) }
-                                },
+                                text = track.durationMs?.let { formatMs(it) } ?: "—",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = subColor,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
                             )
-                        }
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = track.durationMs?.let { formatMs(it) } ?: "—",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = subColor,
-                        )
-                        IconButton(
-                            onClick = { addTarget = track },
-                            modifier = Modifier.size(36.dp),
-                        ) {
-                            Icon(
-                                Icons.Default.Add,
-                                contentDescription = "Add to playlist",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                        val showStop = isCurrent && playerSnap.isPlaying
-                        IconButton(
-                            onClick = {
-                                if (isCurrent) state.togglePlay()
-                                else state.requestLibraryPick(filtered, index)
-                            },
-                            modifier = Modifier.size(36.dp),
-                        ) {
-                            Icon(
-                                imageVector = if (showStop) Icons.Default.Stop else Icons.Default.PlayArrow,
-                                contentDescription = if (showStop) "Stop" else "Play",
-                                tint = if (showStop) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.primary
+                            IconButton(
+                                onClick = { addTarget = track },
+                                modifier = Modifier.size(36.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.Add,
+                                    contentDescription = "Add to playlist",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                            val showStop = isCurrent && playerSnap.isPlaying
+                            IconButton(
+                                onClick = {
+                                    if (isCurrent) state.togglePlay()
+                                    else state.requestLibraryPick(filtered, index)
                                 },
-                                modifier = Modifier.size(20.dp),
-                            )
+                                modifier = Modifier.size(36.dp),
+                            ) {
+                                Icon(
+                                    imageVector = if (showStop) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                    contentDescription = if (showStop) "Stop" else "Play",
+                                    tint = if (showStop) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    },
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
                         }
                     }
                 }
