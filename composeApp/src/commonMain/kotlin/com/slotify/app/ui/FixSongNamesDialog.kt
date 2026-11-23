@@ -77,6 +77,16 @@ fun FixSongNamesDialog(
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
+                    if (case.expectedPrefix.isNotEmpty() &&
+                        !edited.trim().startsWith(case.expectedPrefix, ignoreCase = true)
+                    ) {
+                        Text(
+                            text = "Doesn't start with “${case.expectedPrefix}” — " +
+                                "this file will be offered again next time.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                        )
+                    }
                     Text(
                         text = "Edit the name if you like. Renaming updates every playlist " +
                             "row and pin linked to this file.",
