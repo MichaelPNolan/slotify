@@ -1243,7 +1243,7 @@ class AppState(
         scope.launch { matchPlaylist(id) }
     }
 
-    private fun rematchAll() {
+    private suspend fun rematchAll() {
         _playlists.value.forEach { matchPlaylist(it.id) }
     }
 
@@ -1256,11 +1256,47 @@ class AppState(
         return existing.filterNot { it.id in incomingIds } + incoming
     }
 
-    private fun matchPlaylist(id: String) {
+    private suspend fun matchPlaylist(id: String) {
         val playlist = _playlists.value.firstOrNull { it.id == id } ?: return
-        val locals = _library.value
+        var locals = _library.value
         val threshold = _settings.value.matchThreshold
         val links = _manualLinks.value.linksFor(id)
+
+        // Pinned files can fall out of the index (scan outside roots, file
+        // moved). Re-read existing ones so pins never silently degrade;
+        // drop pins whose file is gone so the row can re-match honestly.
+        if (links.isNotEmpty()) {
+            val have = locals.mapTo(HashSet()) { it.filePath }
+            var added = false
+            var dropped = false
+            for (path in links.values.distinct()) {
+                if (path in have) continue
+                if (!java.io.File(path).isFile) {
+                    _manualLinks.value = _manualLinks.value.let { l ->
+                        var next = l
+                        for ((plId, pins) in l.byPlaylist) {
+                            for ((key, p) in pins) {
+                                if (p == path) next = next.remove(plId, key)
+                            }
+                        }
+                        next
+                    }
+                    dropped = true
+                    continue
+                }
+                val t = runCatching { scanner.readTrack(path) }.getOrNull() ?: continue
+                locals = locals + t
+                added = true
+            }
+            if (added) {
+                _library.value = locals
+                withContext(Dispatchers.IO) { repository.saveLibrary(locals) }
+            }
+            if (dropped) {
+                withContext(Dispatchers.IO) { repository.saveManualLinks(_manualLinks.value) }
+            }
+        }
+
         // Marks (skip / delete) are user intent — keep them across rematch.
         val priorMarks = playlist.resolvedTracks
             .mapNotNull { row -> row.mark?.let { Matcher.trackKey(row.remote) to it } }
@@ -2048,12 +2084,18 @@ class AppState(
     /** Non-null → show the reset-played dialog before starting this pick. */
     val pendingResetPick: StateFlow<PickAction?> = _pendingResetPick.asStateFlow()
 
-    /** Playlist row pick — asks whenever a played set exists (S6). */
+    /** Playlist row pick — asks only when this row's file already played (S6). */
     fun requestPlaylistPick(playlistId: String, fromRowIndex: Int) {
         val sameRow = _nowPlaying.value != null &&
             _activePlaylistId.value == playlistId &&
             currentOriginalRowIndex(playlistId) == fromRowIndex
-        if (_playedKeys.value.isEmpty() || sameRow) {
+        if (sameRow) {
+            playPlaylist(playlistId, fromRowIndex)
+            return
+        }
+        val file = _playlists.value.find { it.id == playlistId }
+            ?.resolvedTracks?.getOrNull(fromRowIndex)?.match?.local?.filePath
+        if (file == null || file !in _playedKeys.value) {
             playPlaylist(playlistId, fromRowIndex)
             return
         }

@@ -2,6 +2,7 @@ package com.slotify.app.match
 
 import com.slotify.app.model.LocalTrack
 import com.slotify.app.model.RemoteArtist
+import com.slotify.app.model.RemotePlaylist
 import com.slotify.app.model.RemoteTrack
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -250,5 +251,23 @@ class MatcherTest {
     @Test
     fun tokenSetSplitsAndFolds() {
         assertEquals(setOf("besame", "mucho"), Matcher.tokenSet("Besame, Mucho!"))
+    }
+
+    // ── manual links ────────────────────────────────────────────────
+
+    @Test
+    fun manualLinkWinsEvenWhenFileMissingFromIndex() {
+        val track = remote("Piano Man", "Billy Joel")
+        val playlist = RemotePlaylist(id = "pl", name = "Billy Joel", tracks = listOf(track))
+        val rows = Matcher.matchPlaylist(
+            remote = playlist,
+            locals = emptyList(),
+            threshold = 0.9,
+            manualLinks = mapOf(Matcher.trackKey(track) to "/music/Piano Man.opus"),
+        )
+        val match = rows[0].match
+        assertNotNull(match)
+        assertTrue(match.isManual, "pin must win even with an empty library index")
+        assertEquals("/music/Piano Man.opus", match.local.filePath)
     }
 }

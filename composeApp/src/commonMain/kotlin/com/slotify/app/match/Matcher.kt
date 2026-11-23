@@ -155,7 +155,9 @@ object Matcher {
         return remote.tracks.map { track ->
             val key = trackKey(track)
             val manualPath = manualLinks[key]
-            val manualLocal = manualPath?.let { byPath[it] }
+            // Pin wins even when the index lacks the file (scan dropped it) —
+            // synthesize a minimal row so the link never degrades to fuzzy.
+            val manualLocal = manualPath?.let { byPath[it] ?: LocalTrack(filePath = it) }
             if (manualLocal != null) {
                 ResolvedPlaylistTrack(track, TrackMatch(manualLocal, confidence = 1.0, isManual = true))
             } else {

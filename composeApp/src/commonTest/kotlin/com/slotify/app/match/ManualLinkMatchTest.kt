@@ -64,13 +64,18 @@ class ManualLinkMatchTest {
     }
 
     @Test
-    fun missingManualPathFallsBackToFuzzy() {
+    fun missingManualPathStillWinsOverFuzzy() {
+        // The index doesn't know the pinned file (scan dropped it) — the pin
+        // must survive instead of silently degrading to fuzzy. (AppState
+        // re-indexes existing files and drops dead pins before matching.)
         val resolved = Matcher.matchPlaylist(
             playlist,
             listOf(local),
             threshold = 0.75,
-            manualLinks = mapOf(Matcher.trackKey(remote) to "/gone/missing.opus"),
+            manualLinks = mapOf(Matcher.trackKey(remote) to "/reindex/me.opus"),
         )
-        assertNull(resolved[0].match)
+        val match = assertNotNull(resolved[0].match)
+        assertTrue(match.isManual)
+        assertEquals("/reindex/me.opus", match.local.filePath)
     }
 }

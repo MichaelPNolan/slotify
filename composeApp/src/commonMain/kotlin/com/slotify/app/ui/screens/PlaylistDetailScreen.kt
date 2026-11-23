@@ -1,5 +1,6 @@
 package com.slotify.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -31,8 +32,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SuggestionChip
-import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -46,7 +45,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -552,18 +550,9 @@ private fun MatchedRow(
                             }
                         }
                     } else if (justUp) {
-                        val held = change.uptimeMillis - downTime
-                        val totalDx = change.position.x - startX
-                        val totalDy = change.position.y - startY
+                        // Taps are handled by the content-area clickable below —
+                        // chips and buttons must never trigger a pick from here.
                         dragOffsetX = 0f
-                        // A tap moves neither axis beyond touch slop — vertical
-                        // drag-scrolling must not count as a pick.
-                        val isTap = !redoFired && !holdFired && !swiped &&
-                            held < holdMs &&
-                            abs(totalDx) <= tapSlop && abs(totalDy) <= tapSlop
-                        if (isTap) {
-                            state.requestPlaylistPick(playlistId, originalIndex)
-                        }
                         redoFired = false
                     }
                 }
@@ -584,86 +573,79 @@ private fun MatchedRow(
             onClick = { state.cyclePlaylistRowMark(playlistId, Matcher.trackKey(row.remote)) },
         )
         Spacer(Modifier.width(6.dp))
-        Text(
-            text = "${originalIndex + 1}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(28.dp),
-        )
-        Column(modifier = Modifier.weight(1f)) {
+        // Only the text block picks a song — chips/buttons handle themselves.
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .clickable { state.requestPlaylistPick(playlistId, originalIndex) },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                text = row.remote.name,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                color = if (dimmed) {
-                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = buildString {
-                    append(row.remote.artistNames.ifBlank { "Unknown artist" })
-                    row.remote.durationMs?.let { append(" · ").append(formatMs(it)) }
-                    append(" · ").append(match.local.displayTitle)
-                    if (row.mark == RowMark.SKIP) append(" · skipped in play")
-                    if (row.mark == RowMark.DELETE) append(" · marked for delete")
-                },
+                text = "${originalIndex + 1}",
                 style = MaterialTheme.typography.bodySmall,
-                // Existing-library hits are amber; Slotify downloads stay muted.
-                color = when {
-                    row.mark == RowMark.DELETE -> MaterialTheme.colorScheme.error
-                    isExistingLibrary -> MaterialTheme.colorScheme.secondary
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.width(28.dp),
             )
-            // Path under ~/Music only (e.g. Muse.Collection[…]/…), not absolute.
-            if (isExistingLibrary) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = relPath.orEmpty(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.85f),
+                    text = row.remote.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = if (dimmed) {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-            } else if (matchedViaSlotifyLink) {
-                // Staged symlink — show where it actually lives on disk too.
                 Text(
-                    text = "→ " + (match.local.relativeToRoots(roots) ?: match.local.filePath),
+                    text = buildString {
+                        append(row.remote.artistNames.ifBlank { "Unknown artist" })
+                        row.remote.durationMs?.let { append(" · ").append(formatMs(it)) }
+                        append(" · ").append(match.local.displayTitle)
+                        if (row.mark == RowMark.SKIP) append(" · skipped in play")
+                        if (row.mark == RowMark.DELETE) append(" · marked for delete")
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
+                    // Existing-library hits are amber; Slotify downloads stay muted.
+                    color = when {
+                        row.mark == RowMark.DELETE -> MaterialTheme.colorScheme.error
+                        isExistingLibrary -> MaterialTheme.colorScheme.secondary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-            } else if (underSlotify) {
-                val under = localPath.removePrefix("$slotifyRoot/").substringBeforeLast('/', "")
-                Text(
-                    text = if (under.isEmpty()) "Slotify" else "Slotify/$under",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        if (!match.isManual) {
-            ConfidenceChip(
-                confidence = match.confidence,
-                libraryMatch = isExistingLibrary,
-                onAccept = {
-                    // Tap % = accept this match: pin the current file (S10).
-                    state.linkTrackToFile(
-                        playlistId,
-                        Matcher.trackKey(row.remote),
-                        match.local.filePath,
+                // Path under ~/Music only (e.g. Muse.Collection[…]/…), not absolute.
+                if (isExistingLibrary) {
+                    Text(
+                        text = relPath.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.85f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                },
-            )
-            Spacer(Modifier.width(4.dp))
+                } else if (matchedViaSlotifyLink) {
+                    // Staged symlink — show where it actually lives on disk too.
+                    Text(
+                        text = "→ " + (match.local.relativeToRoots(roots) ?: match.local.filePath),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                } else if (underSlotify) {
+                    val under = localPath.removePrefix("$slotifyRoot/").substringBeforeLast('/', "")
+                    Text(
+                        text = if (under.isEmpty()) "Slotify" else "Slotify/$under",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
         if (state.youtube.isSupported) {
             IconButton(onClick = onRedoYoutube) {
@@ -688,29 +670,4 @@ private fun MatchedRow(
             )
         }
     }
-}
-
-@Composable
-private fun ConfidenceChip(
-    confidence: Double,
-    libraryMatch: Boolean = false,
-    onAccept: () -> Unit = {},
-) {
-    val percent = (confidence * 100).toInt()
-    // Library matches use the amber secondary so they read differently from
-    // confidence-only green/red chips on Slotify-sourced rows.
-    val color = when {
-        libraryMatch -> Color(0xFFFFB74D)
-        confidence >= 0.90 -> Color(0xFF66BB6A)
-        confidence >= 0.80 -> Color(0xFFFFB74D)
-        else -> Color(0xFFE57373)
-    }
-    SuggestionChip(
-        onClick = onAccept,
-        label = { Text("$percent%") },
-        colors = SuggestionChipDefaults.suggestionChipColors(
-            containerColor = color.copy(alpha = 0.18f),
-            labelColor = color,
-        ),
-    )
 }
