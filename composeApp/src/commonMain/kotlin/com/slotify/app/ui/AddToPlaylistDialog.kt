@@ -6,8 +6,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -27,8 +27,8 @@ import com.slotify.app.model.AppPlaylist
 import com.slotify.app.model.LocalTrack
 
 /** Create-new / add-to-existing confirmation for one library song (S8).
- *  The playlist list scrolls in full; the most recently added-to playlist
- *  sorts to the top for repeat adds. */
+ *  The playlist list is a bounded LazyColumn — it scrolls natively, so every
+ *  playlist stays reachable on small windows. Last-added-to sorts to the top. */
 @Composable
 fun AddToPlaylistDialog(
     track: LocalTrack,
@@ -46,17 +46,11 @@ fun AddToPlaylistDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add to playlist") },
         text = {
-            Column(
-                modifier = Modifier
-                    .verticalScroll(rememberScrollState())
-                    .heightIn(max = 520.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
                     text = "“${track.displayTitle}” — create a new playlist or pick an existing one.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 4.dp),
                 )
                 OutlinedTextField(
                     value = newName,
@@ -70,34 +64,45 @@ fun AddToPlaylistDialog(
                     enabled = newName.trim().isNotEmpty(),
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Create new playlist") }
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                HorizontalDivider()
                 if (sorted.isEmpty()) {
                     Text(
                         text = "No existing playlists yet.",
                         style = MaterialTheme.typography.bodySmall,
                     )
-                }
-                sorted.forEach { pl ->
-                    val isLast = pl.id == lastAddedId
-                    Text(
-                        text = buildString {
-                            append(pl.name)
-                            append(" (${pl.resolvedTracks.size})")
-                            if (isLast) append(" · last added")
-                        },
+                } else {
+                    // heightIn FIRST so the LazyColumn gets a hard bound and
+                    // scrolls — putting verticalScroll on an outer Column made
+                    // the list clip instead of scroll.
+                    LazyColumn(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onAdd(pl.id) }
-                            .padding(vertical = 10.dp, horizontal = 4.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (isLast) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                            .heightIn(max = 360.dp)
+                            .fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        items(sorted, key = { it.id }) { pl ->
+                            val isLast = pl.id == lastAddedId
+                            Text(
+                                text = buildString {
+                                    append(pl.name)
+                                    append(" (${pl.resolvedTracks.size})")
+                                    if (isLast) append(" · last added")
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onAdd(pl.id) }
+                                    .padding(vertical = 10.dp, horizontal = 4.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (isLast) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                 }
             }
         },
