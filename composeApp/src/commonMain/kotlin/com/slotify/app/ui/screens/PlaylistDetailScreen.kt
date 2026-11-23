@@ -57,6 +57,7 @@ import com.slotify.app.model.RemoteTrack
 import com.slotify.app.model.ResolvedPlaylistTrack
 import com.slotify.app.model.RowMark
 import com.slotify.app.state.AppState
+import com.slotify.app.ui.MarkChip
 import com.slotify.app.ui.formatMs
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -437,24 +438,6 @@ private fun UnmatchedRow(
             }
         }
     }
-}
-
-/** Cycles mark: none → Skip → Delete → none. */
-@Composable
-private fun MarkChip(mark: RowMark?, onClick: () -> Unit) {
-    val (label, color) = when (mark) {
-        null -> "Mark" to MaterialTheme.colorScheme.outline
-        RowMark.SKIP -> "Skip" to MaterialTheme.colorScheme.secondary
-        RowMark.DELETE -> "Del" to MaterialTheme.colorScheme.error
-    }
-    SuggestionChip(
-        onClick = onClick,
-        label = { Text(label, style = MaterialTheme.typography.labelSmall) },
-        colors = SuggestionChipDefaults.suggestionChipColors(
-            containerColor = color.copy(alpha = if (mark == null) 0.08f else 0.20f),
-            labelColor = color,
-        ),
-    )
 }
 
 @Composable
