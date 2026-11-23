@@ -129,6 +129,22 @@ private fun pictureDataFromFlacBlock(b: ByteArray): ByteArray? {
     return b.copyOfRange(i, i + dataLen.toInt())
 }
 
+/** Inverse of the parser above: build a front-cover METADATA_BLOCK_PICTURE block. */
+internal fun buildFlacPictureBlock(image: ByteArray, mime: String, width: Int, height: Int): ByteArray {
+    val out = java.io.ByteArrayOutputStream(64 + image.size)
+    fun be32(v: Int) {
+        out.write(v ushr 24 and 0xFF); out.write(v ushr 16 and 0xFF)
+        out.write(v ushr 8 and 0xFF); out.write(v and 0xFF)
+    }
+    be32(3)                                    // picture type: front cover
+    val mimeBytes = mime.toByteArray(Charsets.US_ASCII)
+    be32(mimeBytes.size); out.write(mimeBytes)
+    be32(0)                                    // empty description
+    be32(width); be32(height); be32(24); be32(0)
+    be32(image.size); out.write(image)
+    return out.toByteArray()
+}
+
 private fun ByteArray.regionMatchesAscii(offset: Int, ascii: String): Boolean {
     if (offset + ascii.length > size) return false
     for (j in ascii.indices) if (this[offset + j] != ascii[j].code.toByte()) return false

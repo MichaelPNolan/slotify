@@ -155,4 +155,16 @@ class OpusArtworkLayoutTest {
         val bytes = oggPage(0, lacesFor(head.size) + lacesFor(tags.size), head + tags)
         assertNull(parseOpusPicture(bytes))
     }
+
+    @Test
+    fun builtPictureBlockRoundTripsThroughTheParser() {
+        // The Android downloader builds blocks with buildFlacPictureBlock and
+        // injects them post-remux — they must read back through the parser.
+        val image = ByteArray(64) { 9 }
+        val block = buildFlacPictureBlock(image, "image/jpeg", 320, 240)
+        val head = opusHeadPacket()
+        val tags = opusTagsPacket(block, padding = 0)
+        val bytes = oggPage(0, lacesFor(head.size) + lacesFor(tags.size), head + tags)
+        assertContentEquals(image, parseOpusPicture(bytes))
+    }
 }

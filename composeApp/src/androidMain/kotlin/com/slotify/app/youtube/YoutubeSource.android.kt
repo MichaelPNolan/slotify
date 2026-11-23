@@ -1,10 +1,13 @@
 package com.slotify.app.youtube
 
 import android.content.Context
+import android.graphics.BitmapFactory
+import android.util.Base64
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.ReturnCode
 import com.slotify.app.data.androidAppContext
 import com.slotify.app.library.AUDIO_EXTENSIONS
+import com.slotify.app.library.buildFlacPictureBlock
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import dev.ffmpegkit_maintained.ytdlp.YtDlp
@@ -150,6 +153,9 @@ object ChaquopyYoutubeSource : YoutubeSource {
                 "Downloaded audio extension .${saved.extension} is not in the Slotify whitelist",
             )
         }
+        // Cover art must be injected AFTER the remux — remuxing drops it (the
+        // opus muxer rejects the attached-picture stream; see spec follow-up).
+        embedCoverArt(saved, dir, name)
         onProgress("Saved ${saved.name}")
         saved.absolutePath
     }
@@ -258,6 +264,105 @@ object ChaquopyYoutubeSource : YoutubeSource {
         }
         src.delete()
         return dest
+    }
+
+    // ── Cover art (post-remux inject — the remux itself drops covers) ─
+
+    /**
+     * Best-effort: inject the yt-dlp thumbnail into [audio] after remuxing.
+     * mp4 gets an attached-picture stream; opus gets a METADATA_BLOCK_PICTURE
+     * comment via an ffmetadata sidecar (a CLI `-metadata` arg would exceed
+     * Android's argument limits for real cover sizes). Failures never fail
+     * the download — the file just keeps no art. The thumbnail file is always
+     * removed afterwards.
+     */
+    private fun embedCoverArt(audio: File, dir: File, baseName: String) {
+        val thumb = listOf("jpg", "jpeg", "png", "webp")
+            .map { File(dir, "$baseName.$it") }
+            .firstOrNull { it.isFile } ?: return
+        runCatching {
+            when (audio.extension.lowercase()) {
+                "mp4" -> injectCoverMp4(audio, thumb)
+                "opus" -> injectCoverOpus(audio, thumb, dir)
+                else -> Unit
+            }
+        }.onFailure { e ->
+            android.util.Log.w("SlotifyYtDlp", "cover embed failed for ${audio.name}: $e")
+        }
+        thumb.delete()
+    }
+
+    /** mp4 cover: audio + JPEG cover as attached_pic (video is never rendered by the app). */
+    private fun injectCoverMp4(audio: File, thumb: File) {
+        val tmp = File(audio.parentFile, "${audio.name}.cover.tmp.mp4")
+        tmp.delete()
+        val ok = runFfmpegCommand(
+            listOf(
+                "-y",
+                "-i", audio.path,
+                "-i", thumb.path,
+                "-map", "0:a", "-map", "1:v",
+                "-c:a", "copy", "-c:v", "mjpeg",
+                "-disposition:v:0", "attached_pic",
+                tmp.path,
+            ),
+        )
+        if (!ok || !tmp.isFile || tmp.length() == 0L) {
+            tmp.delete()
+            error("mp4 cover inject failed")
+        }
+        replaceFile(tmp, audio)
+    }
+
+    /** opus cover: JPEG thumb → FLAC picture block → ffmetadata sidecar → inject. */
+    private fun injectCoverOpus(audio: File, thumb: File, dir: File) {
+        val jpg = File(dir, "${audio.name}.cover.tmp.jpg")
+        val meta = File(dir, "${audio.name}.cover.tmp.meta")
+        val tmp = File(audio.parentFile, "${audio.name}.cover.tmp.opus")
+        try {
+            jpg.delete(); meta.delete(); tmp.delete()
+            if (!runFfmpegCommand(listOf("-y", "-i", thumb.path, "-c:v", "mjpeg", jpg.path)) || !jpg.isFile) {
+                error("thumbnail conversion failed")
+            }
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(jpg.path, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) error("thumbnail decode failed")
+            val block = buildFlacPictureBlock(jpg.readBytes(), "image/jpeg", bounds.outWidth, bounds.outHeight)
+            meta.writeText(
+                ";FFMETADATA1\nMETADATA_BLOCK_PICTURE=" +
+                    Base64.encodeToString(block, Base64.NO_WRAP) + "\n",
+            )
+            val ok = runFfmpegCommand(
+                listOf(
+                    "-y",
+                    "-f", "ffmetadata", "-i", meta.path,
+                    "-i", audio.path,
+                    "-map", "1:a", "-map_metadata", "0",
+                    "-c", "copy", "-f", "opus",
+                    tmp.path,
+                ),
+            )
+            if (!ok || !tmp.isFile || tmp.length() == 0L) error("opus cover inject failed")
+            replaceFile(tmp, audio)
+        } finally {
+            jpg.delete(); meta.delete(); tmp.delete()
+        }
+    }
+
+    private fun runFfmpegCommand(args: List<String>): Boolean {
+        val command = args.joinToString(" ") { a ->
+            if (a.isEmpty() || a.any { it.isWhitespace() }) "\"$a\"" else a
+        }
+        return ReturnCode.isSuccess(FFmpegKit.execute(command).returnCode)
+    }
+
+    private fun replaceFile(tmp: File, dest: File) {
+        if (tmp.renameTo(dest)) return
+        if (dest.exists()) dest.delete()
+        if (!tmp.renameTo(dest)) {
+            tmp.copyTo(dest, overwrite = true)
+            tmp.delete()
+        }
     }
 
     // ── Naming / JSON ─────────────────────────────────────────────────
@@ -400,6 +505,9 @@ def download(url, out_dir, base_name, progress_cb=None):
                 "no_warnings": True,
                 "noprogress": True,
                 "noplaylist": True,
+                # Save the thumbnail beside the audio; Kotlin embeds it AFTER
+                # the remux (remuxing strips covers, so embed-here would be lost).
+                "writethumbnail": True,
                 "retries": 2,
                 "fragment_retries": 3,
                 # Keep android app from looking like a blank UA.
@@ -445,6 +553,7 @@ def download(url, out_dir, base_name, progress_cb=None):
     matches = [
         p for p in glob.glob(pattern)
         if os.path.isfile(p) and not p.endswith(".part")
+        and p.rsplit(".", 1)[-1].lower() not in ("jpg", "jpeg", "png", "webp")
     ]
     if not matches:
         raise RuntimeError("yt-dlp produced no file for %s" % base_name)
