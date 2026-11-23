@@ -1,11 +1,16 @@
 package com.slotify.app.state
 
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.decodeToImageBitmap
 import com.slotify.app.data.AppFiles
 import com.slotify.app.data.AppRepository
 import com.slotify.app.data.AppSettings
 import com.slotify.app.data.ManualLinks
 import com.slotify.app.data.PlaybackStore
 import com.slotify.app.data.PlaylistProgress
+import com.slotify.app.library.CoverArtCache
+import com.slotify.app.library.CoverArtReader
+import com.slotify.app.library.createCoverArtReader
 import com.slotify.app.library.isSongFileNameMisnamed
 import com.slotify.app.library.proposeSongFileName
 import com.slotify.app.library.LibraryScanner
@@ -61,6 +66,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -134,6 +141,7 @@ internal fun pinNeedsIndex(pinPath: String, have: Set<String>): Boolean {
 class AppState(
     private val repository: AppRepository = AppRepository(),
     private val scanner: LibraryScanner = createLibraryScanner(),
+    private val coverArtReader: CoverArtReader = createCoverArtReader(),
     val player: AudioPlayer = createAudioPlayer(),
     val spotify: SpotifyPort? = null,
     val youtube: YoutubeSource = createYoutubeSource(),
@@ -237,6 +245,13 @@ class AppState(
     private val _nowPlaying = MutableStateFlow<NowPlaying?>(null)
     val nowPlaying: StateFlow<NowPlaying?> = _nowPlaying.asStateFlow()
 
+    /** Embedded cover of the loaded track for the content backdrop; null = plain background. */
+    private val _coverArt = MutableStateFlow<ImageBitmap?>(null)
+    val coverArt: StateFlow<ImageBitmap?> = _coverArt.asStateFlow()
+
+    /** Bounded path → decoded art so back/forward never re-reads a file. */
+    private val coverArtCache = CoverArtCache()
+
     private val _volume = MutableStateFlow(_settings.value.volume.coerceIn(0f, 1f))
     /** App output volume 0..1 — exposed for the always-visible volume control. */
     val volume: StateFlow<Float> = _volume.asStateFlow()
@@ -308,6 +323,31 @@ class AppState(
                 delay(4_000)
                 if (player.snapshot.value.isPlaying) persistPlaybackProgress()
             }
+        }
+        // Cover backdrop: follow the loaded track. Never throws into playback;
+        // a missing/corrupt picture is null → plain background (spec S4/S5).
+        scope.launch {
+            nowPlaying
+                .map { it?.path }
+                .distinctUntilChanged()
+                .collect { path ->
+                    if (path == null) {
+                        _coverArt.value = null
+                        return@collect
+                    }
+                    coverArtCache[path]?.let { cached ->
+                        _coverArt.value = cached
+                        return@collect
+                    }
+                    val art = withContext(Dispatchers.IO) {
+                        coverArtReader.readArt(path)?.let { bytes ->
+                            runCatching { bytes.decodeToImageBitmap() }.getOrNull()
+                        }
+                    }
+                    if (art != null) coverArtCache.put(path, art)
+                    // Stale-result guard: only publish if this is still the current track.
+                    if (nowPlaying.value?.path == path) _coverArt.value = art
+                }
         }
         // Cold start with no index yet (first run or cleared cache): index now,
         // so the library is ready without requiring a manual Scan click.
