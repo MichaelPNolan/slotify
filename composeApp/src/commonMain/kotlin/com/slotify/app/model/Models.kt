@@ -137,6 +137,11 @@ data class AppPlaylist(
     val markedForDelete: Boolean = false,
     /** In the trash — hidden from the main list until restored or emptied. */
     val trashed: Boolean = false,
+    /**
+     * Rows held for manual sourcing after a corrupt-file reset: fuzzy rematch
+     * must keep them unsourced until the user pins or downloads a copy.
+     */
+    val heldTrackKeys: Set<String> = emptySet(),
 ) {
     val id: String get() = remote.id
     val name: String get() = remote.name

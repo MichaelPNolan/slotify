@@ -130,6 +130,18 @@ class AppRepository {
         AppFiles.writeText(LIBRARY_FILE, json.encodeToString(library))
     }
 
+    // ── Corrupt-file quarantine ──────────────────────────────────────
+
+    fun loadQuarantine(): List<QuarantinedFile> = runCatching {
+        AppFiles.readTextOrNull(QUARANTINE_FILE)?.let {
+            json.decodeFromString<List<QuarantinedFile>>(it)
+        } ?: emptyList()
+    }.getOrDefault(emptyList())
+
+    fun saveQuarantine(entries: List<QuarantinedFile>) {
+        AppFiles.writeText(QUARANTINE_FILE, json.encodeToString(entries))
+    }
+
     // ── Manual track → file links ───────────────────────────────────
 
     fun loadManualLinks(): ManualLinks = runCatching {
@@ -252,6 +264,7 @@ class AppRepository {
         const val SETTINGS_FILE = "settings.json"
         const val PLAYLISTS_FILE = "playlists.json"
         const val LIBRARY_FILE = "library.json"
+        const val QUARANTINE_FILE = "quarantine.json"
         const val MANUAL_LINKS_FILE = "manual_links.json"
         const val PLAYBACK_FILE = "playback.json"
     }

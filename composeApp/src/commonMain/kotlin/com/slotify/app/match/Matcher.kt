@@ -166,6 +166,25 @@ object Matcher {
         }
     }
 
+    /**
+     * Force [heldTrackKeys] rows to unsourced after a corrupt-file reset —
+     * fuzzy rematch must not reclaim them. A pinned match wins (the pin IS
+     * the manual sourcing that clears the hold).
+     */
+    fun applyHolds(
+        rows: List<ResolvedPlaylistTrack>,
+        heldTrackKeys: Set<String>,
+    ): List<ResolvedPlaylistTrack> {
+        if (heldTrackKeys.isEmpty()) return rows
+        return rows.map { row ->
+            if (trackKey(row.remote) in heldTrackKeys && row.match?.isManual != true && row.match != null) {
+                row.copy(match = null)
+            } else {
+                row
+            }
+        }
+    }
+
     // ── Similarity internals ─────────────────────────────────────────
 
     /**

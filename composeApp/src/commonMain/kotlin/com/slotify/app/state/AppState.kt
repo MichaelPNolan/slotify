@@ -8,6 +8,7 @@ import com.slotify.app.data.AppSettings
 import com.slotify.app.data.ManualLinks
 import com.slotify.app.data.PlaybackStore
 import com.slotify.app.data.PlaylistProgress
+import com.slotify.app.data.Quarantine
 import com.slotify.app.library.CoverArtCache
 import com.slotify.app.library.CoverArtReader
 import com.slotify.app.library.createCoverArtReader
@@ -190,7 +191,12 @@ class AppState(
         playlists = _playlists.asStateFlow()
     }
 
-    private val _library = MutableStateFlow(repository.loadLibrary())
+    /** Playback-failed files held out of the index — see [quarantineFailedPlayback]. */
+    private val quarantine = Quarantine(repository.loadQuarantine())
+
+    private val _library = MutableStateFlow(
+        repository.loadLibrary().filterNot { quarantine.contains(it.filePath) },
+    )
     val library: StateFlow<List<LocalTrack>> = _library.asStateFlow()
 
     /**
@@ -313,7 +319,10 @@ class AppState(
             player.events.collect { event ->
                 when (event) {
                     PlayerEvent.Completed -> advance(1, auto = true)
-                    is PlayerEvent.Failed -> _messages.tryEmit(event.message)
+                    is PlayerEvent.Failed -> {
+                        _messages.tryEmit(event.message)
+                        quarantineFailedPlayback()
+                    }
                 }
             }
         }
@@ -407,8 +416,15 @@ class AppState(
             scanner.scan(roots) { line -> _scanStatus.value = line }
         }
         result.onSuccess { tracks ->
+            // Corrupt (quarantined) files stay out of the index; a replaced or
+            // fixed copy (size/mtime changed) rehabilitates and re-enters.
+            val quarantineSizeBefore = quarantine.all.size
+            val scannable = tracks.filterNot { quarantine.shouldSkip(it.filePath) }
+            if (quarantine.all.size != quarantineSizeBefore) {
+                scope.launch { withContext(Dispatchers.IO) { repository.saveQuarantine(quarantine.all) } }
+            }
             val priorMarks = _library.value.associate { it.filePath to it.mark }
-            val marked = tracks.map { t -> priorMarks[t.filePath]?.let { m -> t.copy(mark = m) } ?: t }
+            val marked = scannable.map { t -> priorMarks[t.filePath]?.let { m -> t.copy(mark = m) } ?: t }
             _library.value = marked
             repository.saveLibrary(marked)
             _scanStatus.value = "Indexed ${marked.size} file(s)"
@@ -705,6 +721,13 @@ class AppState(
                     local.filePath,
                 )
                 withContext(Dispatchers.IO) { repository.saveManualLinks(_manualLinks.value) }
+                // A fresh download is the manual replacement — release the
+                // corrupt-reset hold and rehabilitate a quarantined path.
+                clearManualHold(playlistId, Matcher.trackKey(remoteTrack))
+                if (quarantine.contains(local.filePath)) {
+                    quarantine.remove(local.filePath)
+                    withContext(Dispatchers.IO) { repository.saveQuarantine(quarantine.all) }
+                }
             }
             matchPlaylist(playlistId)
         }
@@ -1374,7 +1397,10 @@ class AppState(
                 ) else it
             }
         } else {
-            val resolved = applyMarks(Matcher.matchPlaylist(playlist.remote, locals, threshold, links))
+            val resolved = Matcher.applyHolds(
+                applyMarks(Matcher.matchPlaylist(playlist.remote, locals, threshold, links)),
+                playlist.heldTrackKeys,
+            )
             _playlists.value = _playlists.value.map {
                 if (it.id == id) it.copy(resolvedTracks = resolved) else it
             }
@@ -1536,6 +1562,84 @@ class AppState(
             keysByPlaylist.keys.forEach { id -> matchPlaylist(id) }
         }
         emit("Broken file link cleared — re-matching affected playlists")
+    }
+
+    /**
+     * Playback failed (corrupt/unreadable file): quarantine the file, drop it
+     * from the library index, clear every playlist row matched to it, and HOLD
+     * those rows for manual sourcing — **no fuzzy rematch** until the user
+     * links or downloads a replacement (spec: reset to *To be sourced* so a
+     * different or better copy can be sourced). The audio file is never
+     * deleted.
+     */
+    private suspend fun quarantineFailedPlayback() {
+        val path = _nowPlaying.value?.path ?: queue.getOrNull(queueIndex)?.path ?: return
+        val name = _nowPlaying.value?.title ?: path.substringAfterLast('/')
+        val isContentUri = path.startsWith("content://")
+
+        var quarantineChanged = false
+        if (!isContentUri && !quarantine.contains(path)) {
+            quarantine.add(path)
+            quarantineChanged = true
+        }
+        withContext(Dispatchers.IO) {
+            if (quarantineChanged) repository.saveQuarantine(quarantine.all)
+            if (!isContentUri) {
+                _library.value = _library.value.filterNot { pathsReferToSameFile(it.filePath, path) }
+                repository.saveLibrary(_library.value)
+            }
+        }
+
+        // Drop every pin that points at the failed file.
+        val originalLinks = _manualLinks.value
+        var links = originalLinks
+        for ((plId, pins) in originalLinks.byPlaylist) {
+            for ((key, p) in pins) {
+                if (pathsReferToSameFile(p, path)) {
+                    links = links.remove(plId, key)
+                }
+            }
+        }
+
+        // Rows matched to the file → unsourced + held for manual sourcing.
+        var rowsChanged = false
+        _playlists.value = _playlists.value.map { pl ->
+            val affected = pl.resolvedTracks.mapNotNull { row ->
+                val matched = row.match?.local?.filePath ?: return@mapNotNull null
+                if (!pathsReferToSameFile(matched, path)) return@mapNotNull null
+                Matcher.trackKey(row.remote)
+            }
+            if (affected.isEmpty()) pl else {
+                rowsChanged = true
+                pl.copy(
+                    resolvedTracks = pl.resolvedTracks.map { row ->
+                        if (Matcher.trackKey(row.remote) in affected) row.copy(match = null) else row
+                    },
+                    heldTrackKeys = pl.heldTrackKeys + affected,
+                )
+            }
+        }
+
+        if (links != originalLinks) {
+            _manualLinks.value = links
+            withContext(Dispatchers.IO) { repository.saveManualLinks(links) }
+        }
+        if (rowsChanged) {
+            withContext(Dispatchers.IO) { repository.savePlaylists(_playlists.value) }
+            emit("“$name” couldn't play — reset to To be sourced")
+        } else if (!isContentUri) {
+            emit("“$name” couldn't play — removed from the library index")
+        }
+    }
+
+    /** A pin is manual sourcing — release the corrupt-reset hold for this row. */
+    private suspend fun clearManualHold(playlistId: String, trackKey: String) {
+        val playlist = _playlists.value.firstOrNull { it.id == playlistId } ?: return
+        if (trackKey !in playlist.heldTrackKeys) return
+        _playlists.value = _playlists.value.map {
+            if (it.id == playlistId) it.copy(heldTrackKeys = it.heldTrackKeys - trackKey) else it
+        }
+        withContext(Dispatchers.IO) { repository.savePlaylists(_playlists.value) }
     }
 
     /**
@@ -2013,6 +2117,13 @@ class AppState(
             }
             _manualLinks.value = _manualLinks.value.put(playlistId, trackKey, local.filePath)
             withContext(Dispatchers.IO) { repository.saveManualLinks(_manualLinks.value) }
+            // Explicit user pick = manual sourcing — release the hold and
+            // rehabilitate a quarantined path (the user chose it deliberately).
+            clearManualHold(playlistId, trackKey)
+            if (quarantine.contains(local.filePath)) {
+                quarantine.remove(local.filePath)
+                withContext(Dispatchers.IO) { repository.saveQuarantine(quarantine.all) }
+            }
             matchPlaylist(playlistId)
             emit("Linked to ${local.displayTitle}")
         }
