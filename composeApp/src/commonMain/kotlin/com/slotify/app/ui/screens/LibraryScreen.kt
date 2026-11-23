@@ -221,11 +221,7 @@ fun LibraryScreen(state: AppState) {
                             color = subColor,
                         )
                         IconButton(
-                            onClick = {
-                                addTarget = track
-                                // Pick up playlists added outside this session.
-                                state.refreshPlaylistsFromDisk()
-                            },
+                            onClick = { addTarget = track },
                             modifier = Modifier.size(36.dp),
                         ) {
                             Icon(

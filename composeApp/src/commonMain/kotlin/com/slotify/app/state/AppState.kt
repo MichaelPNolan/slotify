@@ -1276,16 +1276,6 @@ class AppState(
     /** Short UI message for controls without a status line (S9 Find current). */
     fun showMessage(text: String) = emit(text)
 
-    /** Re-read playlists from disk so lists added outside this session show up. */
-    fun refreshPlaylistsFromDisk() {
-        scope.launch {
-            val fromDisk = withContext(Dispatchers.IO) { repository.loadPlaylists() }
-            if (fromDisk.isNotEmpty()) {
-                _playlists.value = fromDisk
-            }
-        }
-    }
-
     /** Delete every library row marked DELETE: files off disk, rows out of
      *  the index, then rematch playlists against what remains. */
     fun deleteMarkedLibraryFiles() {
