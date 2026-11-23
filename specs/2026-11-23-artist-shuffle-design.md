@@ -1,5 +1,10 @@
 # Artist Shuffle, Library Session UI, and Row-Mark Rework — Design
 
+> [!NOTE]
+> This document may not reflect the current implementation.
+> See the final report for up-to-date state:
+> [Final Report](../reports/artist-shuffle.md)
+
 Date: 2026-11-23 · Branch: `0.1.0` · Status: approved
 
 ## [S1] Problem
