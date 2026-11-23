@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.AlertDialog
@@ -39,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import com.slotify.app.model.RowMark
 import com.slotify.app.state.AppState
 import com.slotify.app.state.SpotifyStatus
+import com.slotify.app.ui.FixSongNamesDialog
 import com.slotify.app.ui.LegalDisclaimerDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -51,6 +53,7 @@ fun SettingsScreen(state: AppState) {
     val scanStatus by state.scanStatus.collectAsState()
     val importStatus by state.importStatus.collectAsState()
     val library by state.library.collectAsState()
+    val fixNames by state.fixNames.collectAsState()
 
     var newRoot by remember { mutableStateOf("") }
     var playlistUrl by remember { mutableStateOf("") }
@@ -189,6 +192,14 @@ fun SettingsScreen(state: AppState) {
                 )
             }
         }
+        OutlinedButton(
+            onClick = { state.beginFixSongNames() },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Fix song names…")
+        }
 
         HorizontalDivider()
 
@@ -295,6 +306,15 @@ fun SettingsScreen(state: AppState) {
             dismissButton = {
                 TextButton(onClick = { showDeleteMarked = false }) { Text("Cancel") }
             },
+        )
+    }
+
+    fixNames?.let { session ->
+        FixSongNamesDialog(
+            session = session,
+            onRename = { state.fixNamesRename(it) },
+            onSkip = { state.fixNamesSkip() },
+            onClose = { state.closeFixSongNames() },
         )
     }
 }

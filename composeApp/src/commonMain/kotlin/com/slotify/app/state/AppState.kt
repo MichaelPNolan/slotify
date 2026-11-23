@@ -6,6 +6,8 @@ import com.slotify.app.data.AppSettings
 import com.slotify.app.data.ManualLinks
 import com.slotify.app.data.PlaybackStore
 import com.slotify.app.data.PlaylistProgress
+import com.slotify.app.library.isSongFileNameMisnamed
+import com.slotify.app.library.proposeSongFileName
 import com.slotify.app.library.LibraryScanner
 import com.slotify.app.library.createLibraryScanner
 import com.slotify.app.library.writeAudioMetadata
@@ -88,6 +90,25 @@ private data class QueueEntry(
 sealed interface PickAction {
     data class Playlist(val playlistId: String, val fromRowIndex: Int) : PickAction
     data class Library(val tracks: List<LocalTrack>, val index: Int) : PickAction
+}
+
+/** One fix-song-names case: original file + editable proposed name. */
+data class FixNamesCase(
+    val oldPath: String,
+    val newPath: String,
+    val currentName: String,
+    val proposedName: String,
+)
+
+/** Walk state for the fix-song-names mode (one case at a time). */
+data class FixNamesSession(
+    val cases: List<FixNamesCase>,
+    val index: Int = 0,
+    val renamedCount: Int = 0,
+    val error: String? = null,
+) {
+    val current: FixNamesCase? get() = cases.getOrNull(index)
+    val done: Boolean get() = index >= cases.size
 }
 
 /**
@@ -1324,6 +1345,148 @@ class AppState(
                 else -> "Deleted $deleted file(s); $failed failed — check storage access"
             }
         }
+    }
+
+    // ── Fix song names (one case at a time) ─────────────────────────
+
+    private val _fixNames = MutableStateFlow<FixNamesSession?>(null)
+    /** Non-null → the fix-song-names dialog is open with a live walk. */
+    val fixNames: StateFlow<FixNamesSession?> = _fixNames.asStateFlow()
+
+    /** Snapshot every misnamed library file (artist known, prefix missing). */
+    fun beginFixSongNames() {
+        val cases = _library.value.mapNotNull { t ->
+            val artist = t.artist?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val title = t.title?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            if (t.filePath.startsWith("content://")) return@mapNotNull null
+            val file = java.io.File(t.filePath)
+            if (!isSongFileNameMisnamed(file.nameWithoutExtension, artist)) return@mapNotNull null
+            val proposed = proposeSongFileName(artist, title, file.extension)
+            if (proposed == file.name) return@mapNotNull null
+            val parent = file.parentFile ?: return@mapNotNull null
+            FixNamesCase(
+                oldPath = t.filePath,
+                newPath = java.io.File(parent, proposed).path,
+                currentName = file.name,
+                proposedName = proposed,
+            )
+        }
+        if (cases.isEmpty()) {
+            showMessage("No misnamed song files found")
+            return
+        }
+        _fixNames.value = FixNamesSession(cases)
+    }
+
+    /**
+     * Rename the current case to [editedName] (user may tweak the proposal).
+     * Playlists/pins/library are scanned BEFORE the rename and only updated
+     * AFTER it succeeds, so links follow the file to its new name.
+     */
+    fun fixNamesRename(editedName: String) {
+        val session = _fixNames.value ?: return
+        val case = session.current ?: return
+        fun fail(msg: String) {
+            _fixNames.value = session.copy(error = msg)
+        }
+        val name = editedName.trim()
+        if (name.isEmpty() || name == "." || name == "..") return fail("Enter a file name")
+        if (name.contains('/') || name.contains('\\')) {
+            return fail("File name cannot contain path separators")
+        }
+        val oldFile = java.io.File(case.oldPath)
+        if (!oldFile.exists()) return fail("Original file no longer exists")
+        val parent = oldFile.parentFile ?: return fail("Cannot resolve this file's folder")
+        val target = java.io.File(parent, name)
+        if (target.path == case.oldPath) return fail("Name unchanged — edit it first")
+        if (target.exists()) return fail("“$name” already exists in this folder")
+
+        // 1. Find every playlist row linked to this file BEFORE renaming.
+        val linkedRows: Map<String, Set<Int>> = _playlists.value.associate { pl ->
+            pl.id to pl.resolvedTracks
+                .mapIndexedNotNull { i, row -> if (row.match?.local?.filePath == case.oldPath) i else null }
+                .toSet()
+        }
+
+        // 2. Rename on disk.
+        val renamed = runCatching { oldFile.renameTo(target) }.getOrDefault(false)
+        if (!renamed) return fail("Rename failed — check storage access")
+        val newPath = target.path
+
+        // 3a. Library index row.
+        _library.value = _library.value.map { t ->
+            if (t.filePath != case.oldPath) t else t.copy(
+                filePath = newPath,
+                displayPath = if (t.displayPath == case.oldPath) newPath else t.displayPath,
+            )
+        }
+        scope.launch { withContext(Dispatchers.IO) { repository.saveLibrary(_library.value) } }
+
+        // 3b. Playlist matches found in step 1.
+        _playlists.value = _playlists.value.map { pl ->
+            val hit = linkedRows[pl.id].orEmpty()
+            if (hit.isEmpty()) return@map pl
+            pl.copy(
+                resolvedTracks = pl.resolvedTracks.mapIndexed { i, row ->
+                    val m = if (i in hit) row.match else null
+                    if (m == null) row else row.copy(
+                        match = m.copy(
+                            local = m.local.copy(
+                                filePath = newPath,
+                                displayPath = if (m.local.displayPath == case.oldPath) {
+                                    newPath
+                                } else {
+                                    m.local.displayPath
+                                },
+                            ),
+                        ),
+                    )
+                },
+            )
+        }
+        scope.launch { withContext(Dispatchers.IO) { repository.savePlaylists(_playlists.value) } }
+
+        // 3c. Manual pins pointing at the old path.
+        val links = _manualLinks.value
+        if (links.byPlaylist.values.any { it.containsValue(case.oldPath) }) {
+            val updated = links.copy(
+                byPlaylist = links.byPlaylist.mapValues { (_, tracks) ->
+                    tracks.mapValues { (_, p) -> if (p == case.oldPath) newPath else p }
+                },
+            )
+            _manualLinks.value = updated
+            scope.launch { withContext(Dispatchers.IO) { repository.saveManualLinks(updated) } }
+        }
+
+        // 3d. Live queue + now-playing (paths are symlink-resolved at queue build).
+        val oldResolved = com.slotify.app.data.resolveSymlinkTarget(case.oldPath)
+        val newResolved = com.slotify.app.data.resolveSymlinkTarget(newPath)
+        queue = queue.map { e ->
+            if (e.path == case.oldPath || e.path == oldResolved) e.copy(path = newResolved) else e
+        }
+        _nowPlaying.value = _nowPlaying.value?.let { np ->
+            if (np.path == case.oldPath || np.path == oldResolved) {
+                np.copy(path = newResolved)
+            } else {
+                np
+            }
+        }
+
+        _fixNames.value = session.copy(
+            index = session.index + 1,
+            renamedCount = session.renamedCount + 1,
+            error = null,
+        )
+    }
+
+    /** Advance without changing this file (session-only skip). */
+    fun fixNamesSkip() {
+        val session = _fixNames.value ?: return
+        _fixNames.value = session.copy(index = session.index + 1, error = null)
+    }
+
+    fun closeFixSongNames() {
+        _fixNames.value = null
     }
 
     /** Create a new playlist containing [track] as an accepted match (S8). */
