@@ -138,7 +138,7 @@ fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
                             spotifyStatus == SpotifyStatus.CONNECTED ->
                                 Text("Paste (button or Ctrl+V) · Import adds just this playlist")
                             else ->
-                                Text("Public playlists work without login; private ones use your Floorp session")
+                                Text("Public playlists work without login")
                         }
                     },
                 )

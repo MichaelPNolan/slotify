@@ -39,7 +39,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.slotify.app.model.RowMark
 import com.slotify.app.state.AppState
-import com.slotify.app.state.SpotifyStatus
 import com.slotify.app.ui.FixSongNamesDialog
 import com.slotify.app.ui.LegalDisclaimerDialog
 
@@ -47,9 +46,6 @@ import com.slotify.app.ui.LegalDisclaimerDialog
 @Composable
 fun SettingsScreen(state: AppState) {
     val settings by state.settings.collectAsState()
-    val spotifyStatus by state.spotifyStatus.collectAsState()
-    val spotifyName by state.spotifyDisplayName.collectAsState()
-    val spotifyError by state.spotifyError.collectAsState()
     val scanStatus by state.scanStatus.collectAsState()
     val importStatus by state.importStatus.collectAsState()
     val library by state.library.collectAsState()
@@ -70,39 +66,7 @@ fun SettingsScreen(state: AppState) {
     ) {
         Text("Settings", style = MaterialTheme.typography.headlineSmall)
 
-        // ── Spotify ──────────────────────────────────────────────────
-        SectionTitle("Spotify connection")
-        // Persistent failure display — snackbars vanish; this doesn't.
-        spotifyError?.let { err ->
-            Text(
-                text = "Last error: $err",
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        }
-        when (spotifyStatus) {
-            SpotifyStatus.CONNECTED -> {
-                Text(
-                    text = "Connected${spotifyName?.let { " as $it" } ?: ""}",
-                    color = MaterialTheme.colorScheme.tertiary,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                OutlinedButton(onClick = { state.disconnectSpotify() }) { Text("Disconnect") }
-            }
-
-            SpotifyStatus.CONNECTING -> Text("Connecting…", color = MaterialTheme.colorScheme.primary)
-
-            else -> {
-                Text(
-                    text = "Metadata only — Slotify never downloads Spotify audio. " +
-                        "Playlist URLs and public search work without signing in.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-
-        HorizontalDivider()
+        // ── Import playlist URL ──────────────────────────────────────
         SectionTitle("Import playlist URL")
         OutlinedTextField(
             value = playlistUrl,
@@ -111,7 +75,7 @@ fun SettingsScreen(state: AppState) {
             label = { Text("https://open.spotify.com/playlist/…") },
             singleLine = true,
             supportingText = {
-                Text("Public playlists need no sign-in; private ones use your Floorp session cookie")
+                Text("Metadata only — never Spotify audio. Public playlists need no sign-in")
             },
         )
         OutlinedButton(
