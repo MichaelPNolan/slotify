@@ -34,6 +34,8 @@ import com.slotify.app.playback.createAudioPlayer
 import com.slotify.app.playback.cycle
 import com.slotify.app.playback.initialMode
 import com.slotify.app.playback.isArtistMode
+import com.slotify.app.playback.primaryArtistName
+import com.slotify.app.playback.splitArtistList
 import com.slotify.app.spotify.parseSpotifyPlaylistId
 import com.slotify.app.spotify.PublicPlaylistHit
 import com.slotify.app.spotify.SpotifyPublicSearch
@@ -1274,6 +1276,52 @@ class AppState(
     /** Short UI message for controls without a status line (S9 Find current). */
     fun showMessage(text: String) = emit(text)
 
+    /** Re-read playlists from disk so lists added outside this session show up. */
+    fun refreshPlaylistsFromDisk() {
+        scope.launch {
+            val fromDisk = withContext(Dispatchers.IO) { repository.loadPlaylists() }
+            if (fromDisk.isNotEmpty()) {
+                _playlists.value = fromDisk
+            }
+        }
+    }
+
+    /** Delete every library row marked DELETE: files off disk, rows out of
+     *  the index, then rematch playlists against what remains. */
+    fun deleteMarkedLibraryFiles() {
+        val marked = _library.value.filter { it.mark == RowMark.DELETE }
+        if (marked.isEmpty()) {
+            showMessage("No library rows marked for deletion")
+            return
+        }
+        scope.launch {
+            _scanStatus.value = "Deleting ${marked.size} marked file(s)…"
+            var deleted = 0
+            var failed = 0
+            withContext(Dispatchers.IO) {
+                for (t in marked) {
+                    if (t.filePath.startsWith("content://")) {
+                        failed++ // SAF document URIs need a DocumentsContract delete.
+                        continue
+                    }
+                    val ok = runCatching { java.io.File(t.filePath).delete() }.getOrDefault(false)
+                    if (ok) deleted++ else failed++
+                }
+            }
+            val gone = marked.map { it.filePath }.toSet()
+            _library.value = _library.value.filterNot { it.filePath in gone }
+            withContext(Dispatchers.IO) { repository.saveLibrary(_library.value) }
+            if (_playlists.value.isNotEmpty()) {
+                rematchAll()
+            }
+            _scanStatus.value = when {
+                failed == 0 -> "Deleted $deleted marked file(s)"
+                deleted == 0 -> "Delete failed for $failed file(s) — check storage access"
+                else -> "Deleted $deleted file(s); $failed failed — check storage access"
+            }
+        }
+    }
+
     /** Create a new playlist containing [track] as an accepted match (S8). */
     fun createPlaylistWithTrack(name: String, track: LocalTrack) {
         val trimmed = name.trim()
@@ -1848,11 +1896,12 @@ class AppState(
     /** Library row pick — asks only when this row is already greyed (S6). */
     fun requestLibraryPick(tracks: List<LocalTrack>, index: Int) {
         val track = tracks.getOrNull(index) ?: return
-        val key = "lib:${track.filePath}"
+        val queueKey = "lib:${track.filePath}"
         val sameRow = _activePlaylistId.value == null &&
             _nowPlaying.value != null &&
-            queue.getOrNull(queueIndex)?.trackKey == key
-        if (key !in _playedKeys.value || sameRow) {
+            queue.getOrNull(queueIndex)?.trackKey == queueKey
+        // playedKeys holds plain file paths — compare the path, not the queue key.
+        if (track.filePath !in _playedKeys.value || sameRow) {
             playLibrary(tracks, index)
             return
         }
@@ -1943,12 +1992,24 @@ class AppState(
                 if (row.mark == RowMark.SKIP || row.mark == RowMark.DELETE || row.match == null) {
                     return@mapNotNull null
                 }
-                val artist = row.remote.primaryArtist.ifBlank { row.match.local.displayArtist }
-                ArtistSourceItem(Matcher.trackKey(row.remote), artist)
+                val raw = row.remote.artistNames.ifBlank { row.match.local.displayArtist }
+                val primary = row.remote.primaryArtist.ifBlank { primaryArtistName(raw) }
+                ArtistSourceItem(
+                    key = Matcher.trackKey(row.remote),
+                    artist = primary.ifBlank { "Unknown artist" },
+                    allArtists = row.remote.artists.map { it.name }
+                        .ifEmpty { splitArtistList(raw) }
+                        .ifEmpty { listOf(primary) },
+                )
             }
         }
-        return librarySource.map {
-            ArtistSourceItem("lib:${it.filePath}", it.displayArtist)
+        return librarySource.map { t ->
+            val raw = t.displayArtist
+            ArtistSourceItem(
+                key = "lib:${t.filePath}",
+                artist = primaryArtistName(raw),
+                allArtists = splitArtistList(raw),
+            )
         }
     }
 
@@ -1960,22 +2021,37 @@ class AppState(
     }
 
     private fun restartArtistSessionAroundCurrent() {
-        val current = queue.getOrNull(queueIndex) ?: return
-        val session = ensureArtistSession() ?: return
-        val artist = artistItems().find { it.key == current.trackKey }?.artist ?: return
-        session.restartAround(artist)
+        anchorArtistSessionToCurrent()
     }
 
     /**
      * Build the artist session around the song being started: the current
-     * artist's block plays first (current song counts toward the quota), so
-     * ARTIST_2 finishes that artist before moving on (S5).
+     * artist's block plays first (current song counts toward the quota), with
+     * collab partners as fallback when the primary block runs dry (S5).
      */
     private fun anchorArtistSessionToCurrent() {
         val session = ensureArtistSession() ?: return
         val currentKey = queue.getOrNull(queueIndex)?.trackKey ?: return
-        val artist = artistItems().find { it.key == currentKey }?.artist ?: return
-        session.restartAround(artist)
+        val item = artistItems().find { it.key == currentKey } ?: return
+        session.restartAround(item.artist, item.allArtists)
+    }
+
+    /**
+     * playedKeys holds file paths (grey-out space); ArtistSession keys are
+     * track keys — map the active source's played rows into key space so the
+     * session never repeats a song.
+     */
+    private fun playedSessionKeys(): Set<String> {
+        val paths = _playedKeys.value
+        if (paths.isEmpty()) return emptySet()
+        val plId = _activePlaylistId.value
+        if (plId != null) {
+            val rows = _playlists.value.find { it.id == plId }?.resolvedTracks ?: return emptySet()
+            return rows.filter { it.match?.local?.filePath in paths }
+                .map { Matcher.trackKey(it.remote) }
+                .toSet()
+        }
+        return paths.map { "lib:$it" }.toSet()
     }
 
     /** Keys marked skip/delete in the active source right now (advance-time guard). */
@@ -2093,7 +2169,7 @@ class AppState(
             val session = ensureArtistSession()
             var key: String? = null
             if (session != null) {
-                var excluded = _playedKeys.value
+                var excluded = playedSessionKeys()
                 while (true) {
                     val k = session.next(excluded) ?: break
                     if (k !in skipped) {

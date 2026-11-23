@@ -12,10 +12,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -25,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -33,14 +35,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.slotify.app.model.RowMark
 import com.slotify.app.state.AppState
 import com.slotify.app.state.SpotifyStatus
+import com.slotify.app.ui.LegalDisclaimerDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(state: AppState, pkceAwait: suspend (String) -> String) {
+fun SettingsScreen(state: AppState) {
     val settings by state.settings.collectAsState()
     val spotifyStatus by state.spotifyStatus.collectAsState()
     val spotifyName by state.spotifyDisplayName.collectAsState()
@@ -49,11 +52,11 @@ fun SettingsScreen(state: AppState, pkceAwait: suspend (String) -> String) {
     val importStatus by state.importStatus.collectAsState()
     val library by state.library.collectAsState()
 
-    var clientId by remember(settings.spotifyClientId) { mutableStateOf(settings.spotifyClientId) }
-    var spDc by remember { mutableStateOf("") }
     var newRoot by remember { mutableStateOf("") }
-    var jsonPath by remember { mutableStateOf("") }
     var playlistUrl by remember { mutableStateOf("") }
+    var showLegalNotice by remember { mutableStateOf(false) }
+    var showDeleteMarked by remember { mutableStateOf(false) }
+    val markedForDelete = library.count { it.mark == RowMark.DELETE }
 
     Column(
         modifier = Modifier
@@ -88,35 +91,8 @@ fun SettingsScreen(state: AppState, pkceAwait: suspend (String) -> String) {
 
             else -> {
                 Text(
-                    text = "Metadata only — Slotify never downloads Spotify audio.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-
-                OutlinedTextField(
-                    value = clientId,
-                    onValueChange = { clientId = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Spotify client ID") },
-                    singleLine = true,
-                    supportingText = {
-                        Text("Free app at developer.spotify.com/dashboard · redirect URI http://127.0.0.1:43821/callback")
-                    },
-                )
-                Button(
-                    onClick = { state.connectOAuth(clientId.trim(), pkceAwait) },
-                    enabled = clientId.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Login, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Sign in with Spotify (browser)")
-                }
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                Text(
-                    text = "Playlist URLs work without signing in (public embed). " +
-                        "For private playlists, Slotify reads the Floorp/Firefox sp_dc cookie.",
+                    text = "Metadata only — Slotify never downloads Spotify audio. " +
+                        "Playlist URLs and public search work without signing in.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -125,27 +101,11 @@ fun SettingsScreen(state: AppState, pkceAwait: suspend (String) -> String) {
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Check browser session cookie") }
                 Text(
-                    text = "Reads sp_dc from Floorp/Firefox on this machine. Metadata only.",
+                    text = "Reads sp_dc from Floorp/Firefox on this machine (desktop). " +
+                        "Only private playlist imports need it; public playlists never do.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-
-                OutlinedTextField(
-                    value = spDc,
-                    onValueChange = { spDc = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("sp_dc cookie value (manual)") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    supportingText = {
-                        Text("Optional: DevTools → Application → Cookies → open.spotify.com → copy sp_dc")
-                    },
-                )
-                OutlinedButton(
-                    onClick = { state.connectCookie(spDc.trim()) },
-                    enabled = spDc.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Connect with cookie") }
             }
         }
 
@@ -221,6 +181,24 @@ fun SettingsScreen(state: AppState, pkceAwait: suspend (String) -> String) {
         scanStatus?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
         }
+        if (markedForDelete > 0) {
+            OutlinedButton(
+                onClick = { showDeleteMarked = true },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Delete marked from library ($markedForDelete)",
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
 
         HorizontalDivider()
 
@@ -253,34 +231,26 @@ fun SettingsScreen(state: AppState, pkceAwait: suspend (String) -> String) {
                 "Playlists live in app data, not the music folder, unless you export them. " +
                     "Export writes playlists.json + manual_links.json to the Music folder above."
             } else {
-                "Put playlists.json and manual_links.json in the Music folder above " +
-                    "(not Slotify/), then Import."
+                "Export copies playlists.json + manual_links.json to the Music folder above. " +
+                    "Use Pick file… below to import on this device."
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = { state.exportPlaylistsToMusicDir() },
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("Export playlists")
-            }
-            OutlinedButton(
-                onClick = { state.importPlaylistsFromMusicDir() },
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("Import playlists")
-            }
+        OutlinedButton(
+            onClick = { state.exportPlaylistsToMusicDir() },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Export playlists")
         }
 
         HorizontalDivider()
 
-        // ── JSON import ──────────────────────────────────────────────
+        // ── JSON import — system file picker only ────────────────────
         SectionTitle("Import playlist from file")
         Text(
-            text = "Android: use Pick file (system picker) — raw /sdcard paths often " +
-                "can’t read .json (scoped storage). Desktop: filename or full path.",
+            text = "Choose playlists.json (and pins) with the system file picker. " +
+                "This is the only import path — safer on Android scoped storage.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -292,31 +262,6 @@ fun SettingsScreen(state: AppState, pkceAwait: suspend (String) -> String) {
             Spacer(Modifier.width(8.dp))
             Text("Pick file…")
         }
-        OutlinedTextField(
-            value = jsonPath,
-            onValueChange = { jsonPath = it },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp),
-            label = { Text("Filename or path") },
-            placeholder = { Text("playlists.json") },
-            singleLine = true,
-            supportingText = {
-                Text(
-                    "Music: ${com.slotify.app.data.portableJsonExportDir()} — " +
-                        "or paste content://… from the picker",
-                )
-            },
-        )
-        OutlinedButton(
-            onClick = { state.importPlaylistJsonByName(jsonPath.trim()) },
-            enabled = jsonPath.isNotBlank(),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Icon(Icons.Default.FileOpen, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Import file")
-        }
 
         HorizontalDivider()
         SectionTitle("About")
@@ -326,6 +271,40 @@ fun SettingsScreen(state: AppState, pkceAwait: suspend (String) -> String) {
                 "Fuzzy matching ported from Parachord (MIT).",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedButton(
+            onClick = { showLegalNotice = true },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Responsible use & legal notice") }
+    }
+
+    if (showLegalNotice) {
+        LegalDisclaimerDialog(onDismiss = { showLegalNotice = false })
+    }
+
+    if (showDeleteMarked) {
+        AlertDialog(
+            onDismissRequest = { showDeleteMarked = false },
+            title = { Text("Delete $markedForDelete marked file(s)?") },
+            text = {
+                Text(
+                    text = "Removes the marked songs' files from disk and drops them " +
+                        "from the library index. Playlists keep their rows, but those " +
+                        "tracks become unmatched. This cannot be undone.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.deleteMarkedLibraryFiles()
+                    showDeleteMarked = false
+                }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteMarked = false }) { Text("Cancel") }
+            },
         )
     }
 }
