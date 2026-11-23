@@ -1,5 +1,10 @@
 # Cover-art backdrop design
 
+> [!NOTE]
+> This document may not reflect the current implementation.
+> See the final report for up-to-date state:
+> [Final Report](../reports/cover-art-backdrop.md)
+
 Date: 2026-11-23 · Branch: 0.1.1 · Status: approved in brainstorm
 
 ## [S1] Problem
