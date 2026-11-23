@@ -318,6 +318,10 @@ private fun pictureFromCommentPacket(packet: List<Byte>): ByteArray? {
         i += 4
         return v
     }
+    // RFC 7845: OpusTags = magic + vendor string + comment count + comments.
+    val vendorLen = u32le() ?: return null
+    if (vendorLen < 0 || i + vendorLen > packet.size) return null
+    i += vendorLen
     val count = u32le() ?: return null
     repeat(count) {
         val len = u32le() ?: return null
