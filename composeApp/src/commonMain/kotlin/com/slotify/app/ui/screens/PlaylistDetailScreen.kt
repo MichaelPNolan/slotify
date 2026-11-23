@@ -70,6 +70,7 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
     val activePlaylistId by state.activePlaylistId.collectAsState()
     val playerSnap by state.player.snapshot.collectAsState()
     var findTarget by remember { mutableStateOf<RemoteTrack?>(null) }
+    var linkTarget by remember { mutableStateOf<RemoteTrack?>(null) }
     var filter by rememberSaveable(playlistId) { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
@@ -79,6 +80,14 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
             playlistId = playlistId,
             track = target,
             onDismiss = { findTarget = null },
+        )
+    }
+    linkTarget?.let { target ->
+        LinkFileDialog(
+            state = state,
+            playlistId = playlistId,
+            track = target,
+            onDismiss = { linkTarget = null },
         )
     }
 
@@ -298,6 +307,7 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
                         playlistId = playlist.id,
                         row = row,
                         onFindOnYoutube = { findTarget = it },
+                        onLinkFile = { linkTarget = it },
                     )
                 }
                 item(key = "div-unmatched") {
@@ -372,6 +382,7 @@ private fun UnmatchedRow(
     playlistId: String,
     row: ResolvedPlaylistTrack,
     onFindOnYoutube: (com.slotify.app.model.RemoteTrack) -> Unit,
+    onLinkFile: (com.slotify.app.model.RemoteTrack) -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -405,9 +416,7 @@ private fun UnmatchedRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        TextButton(onClick = {
-            state.linkTrackToFileFromPicker(playlistId, Matcher.trackKey(row.remote))
-        }) {
+        TextButton(onClick = { onLinkFile(row.remote) }) {
             Icon(
                 Icons.Default.FolderOpen,
                 contentDescription = null,
@@ -556,7 +565,7 @@ private fun MatchedRow(
                         val totalDx = change.position.x - startX
                         dragOffsetX = 0f
                         if (!redoFired && !holdFired && !swiped && held < holdMs && totalDx > -threshold) {
-                            state.playPlaylist(playlistId, originalIndex)
+                            state.requestPlaylistPick(playlistId, originalIndex)
                         }
                         redoFired = false
                     }
@@ -671,7 +680,7 @@ private fun MatchedRow(
             }
         }
         // Same pattern as the playlist list: Stop while this row is playing.
-        IconButton(onClick = { state.playPlaylist(playlistId, originalIndex) }) {
+        IconButton(onClick = { state.requestPlaylistPick(playlistId, originalIndex) }) {
             Icon(
                 imageVector = if (isPlayingThis) Icons.Default.Stop else Icons.Default.PlayArrow,
                 contentDescription = if (isPlayingThis) "Stop" else "Play",

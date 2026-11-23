@@ -77,6 +77,12 @@ private data class QueueEntry(
     val trackKey: String,
 )
 
+/** A row pick paused for the "Reset all played already?" answer (S6). */
+sealed interface PickAction {
+    data class Playlist(val playlistId: String, val fromRowIndex: Int) : PickAction
+    data class Library(val tracks: List<LocalTrack>, val index: Int) : PickAction
+}
+
 /**
  * Central app controller: owns all state, performs IO/Spotify/matching work
  * on a background scope, and exposes StateFlows for the Compose UI.
@@ -1750,6 +1756,51 @@ class AppState(
 
     /** Cycle Linear → Shuffle → Artist (2) → Artist (all); keeps the current song (S3). */
     fun cyclePlaybackMode() = applyMode(_playbackMode.value.cycle())
+
+    private val _pendingResetPick = MutableStateFlow<PickAction?>(null)
+    /** Non-null → show the reset-played dialog before starting this pick. */
+    val pendingResetPick: StateFlow<PickAction?> = _pendingResetPick.asStateFlow()
+
+    /** Playlist row pick — asks whenever a played set exists (S6). */
+    fun requestPlaylistPick(playlistId: String, fromRowIndex: Int) {
+        val sameRow = _nowPlaying.value != null &&
+            _activePlaylistId.value == playlistId &&
+            currentOriginalRowIndex(playlistId) == fromRowIndex
+        if (_playedKeys.value.isEmpty() || sameRow) {
+            playPlaylist(playlistId, fromRowIndex)
+            return
+        }
+        _pendingResetPick.value = PickAction.Playlist(playlistId, fromRowIndex)
+    }
+
+    /** Library row pick — asks only when this row is already greyed (S6). */
+    fun requestLibraryPick(tracks: List<LocalTrack>, index: Int) {
+        val track = tracks.getOrNull(index) ?: return
+        val key = "lib:${track.filePath}"
+        val sameRow = _activePlaylistId.value == null &&
+            _nowPlaying.value != null &&
+            queue.getOrNull(queueIndex)?.trackKey == key
+        if (key !in _playedKeys.value || sameRow) {
+            playLibrary(tracks, index)
+            return
+        }
+        _pendingResetPick.value = PickAction.Library(tracks, index)
+    }
+
+    /** Dialog answer: [reset] clears played keys, then the pick plays. */
+    fun resolvePendingResetPick(reset: Boolean) {
+        val action = _pendingResetPick.value ?: return
+        _pendingResetPick.value = null
+        if (reset) _playedKeys.value = emptySet()
+        when (action) {
+            is PickAction.Playlist -> playPlaylist(action.playlistId, action.fromRowIndex)
+            is PickAction.Library -> playLibrary(action.tracks, action.index)
+        }
+    }
+
+    fun cancelPendingResetPick() {
+        _pendingResetPick.value = null
+    }
 
     private fun applyMode(next: PlaybackMode) {
         _playbackMode.value = next

@@ -22,7 +22,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -41,12 +43,14 @@ private val SlotifyColors = darkColorScheme(
 
 /**
  * Root composable.
- * @param pkceAwait platform hook: receives the Spotify authorize URL, returns the `code`.
  */
 @Composable
-fun App(state: AppState, pkceAwait: suspend (String) -> String = { error("OAuth not available") }) {
+fun App(state: AppState) {
     val ui by state.ui.collectAsState()
+    val settings by state.settings.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    // First run shows the legal notice until acknowledged; Settings can re-open it.
+    var showLegalNotice by remember { mutableStateOf(false) }
 
     LaunchedEffect(state) {
         state.messages.collect { snackbarHostState.showSnackbar(it) }
@@ -99,9 +103,22 @@ fun App(state: AppState, pkceAwait: suspend (String) -> String = { error("OAuth 
                         )
 
                         ui.tab == Tab.LIBRARY -> LibraryScreen(state = state)
-                        ui.tab == Tab.SETTINGS -> SettingsScreen(
-                            state = state,
-                            pkceAwait = pkceAwait,
+                        ui.tab == Tab.SETTINGS -> SettingsScreen(state = state)
+                    }
+                    if (!settings.disclaimerAccepted || showLegalNotice) {
+                        LegalDisclaimerDialog(onDismiss = {
+                            showLegalNotice = false
+                            if (!settings.disclaimerAccepted) {
+                                state.updateSettings { it.copy(disclaimerAccepted = true) }
+                            }
+                        })
+                    }
+                    val pendingPick by state.pendingResetPick.collectAsState()
+                    pendingPick?.let {
+                        ResetPlayedDialog(
+                            onReset = { state.resolvePendingResetPick(reset = true) },
+                            onJustPlay = { state.resolvePendingResetPick(reset = false) },
+                            onDismiss = { state.cancelPendingResetPick() },
                         )
                     }
                 }
