@@ -136,6 +136,17 @@ internal fun pinNeedsIndex(pinPath: String, have: Set<String>): Boolean {
 }
 
 /**
+ * True when [startPlaylist] should resume persisted progress instead of
+ * starting the requested row. Only the playlist header's start passes
+ * [fromRowTap] = false; an explicit row tap (even row 0) must always start
+ * that exact row at position 0 — resuming saved progress silently loaded a
+ * different track, paused, so tapping the first row looked like a dead tap
+ * and playback-failure detection never fired.
+ */
+internal fun useSavedProgress(fromRowTap: Boolean, fromRowIndex: Int, hasSaved: Boolean): Boolean =
+    !fromRowTap && fromRowIndex == 0 && hasSaved
+
+/**
  * Central app controller: owns all state, performs IO/Spotify/matching work
  * on a background scope, and exposes StateFlows for the Compose UI.
  */
@@ -2239,7 +2250,7 @@ class AppState(
             }
             return
         }
-        startPlaylist(playlistId, fromRowIndex)
+        startPlaylist(playlistId, fromRowIndex, fromRowTap = true)
     }
 
     /**
@@ -2280,7 +2291,7 @@ class AppState(
             .takeIf { it >= 0 }
     }
 
-    private fun startPlaylist(playlistId: String, fromRowIndex: Int = 0) {
+    private fun startPlaylist(playlistId: String, fromRowIndex: Int = 0, fromRowTap: Boolean = false) {
         val initial = _playlists.value.firstOrNull { it.id == playlistId } ?: return
         if (initial.trashed) {
             emit("Playlist is in the trash — restore it first")
@@ -2305,10 +2316,10 @@ class AppState(
         }
 
         val saved = playbackStore.byPlaylist[playlistId]
-        val useSavedOrder = fromRowIndex == 0 &&
-            saved != null &&
+        val hasSavedProgress = saved != null &&
             saved.orderKeys.isNotEmpty() &&
             saved.orderIndex in saved.orderKeys.indices
+        val useSavedOrder = useSavedProgress(fromRowTap, fromRowIndex, hasSavedProgress)
         val savedProgress = if (useSavedOrder) saved else null
 
         val keysToEntries = playable.associate { (_, row, match) ->
