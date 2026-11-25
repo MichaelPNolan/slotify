@@ -3,25 +3,30 @@
 Read this (plus `README.md` setup) before continuing on a new machine.
 Source of truth for long-lived notes: project memory `MEMORY.md` under MiMoCode’s data dir; this file is the **in-repo** distilled copy so a fresh clone is enough.
 
-**Branch / release line:** **`0.1.2`** (checked out here). Remote: `https://github.com/MichaelPNolan/slotify.git` (`origin/0.1.2`). Older lines: `0.0.3` (pre–artist-shuffle / cover-art), `main`. Do not re-init git or force-push unless the user asks.
+**Branch / release line:** **`0.1.3`** (checked out here). Remote: `https://github.com/MichaelPNolan/slotify.git` (`origin/0.1.3`). Older lines: `0.1.2`, `0.0.3`, `main`. Do not re-init git or force-push unless the user asks.
 
-> `VERSION` file may still say `0.0.3` — **trust the git branch**, not `VERSION`, until someone bumps it on purpose.
+**`VERSION` file:** `0.1.3` — keep it in step with the branch when cutting a new line.
 
 ---
 
-## Catch-up on this station (branch `0.1.2`)
+## Catch-up on this station (branch `0.1.3`)
 
 This host **already has the repo**. No re-clone:
 
 ```bash
 cd <slotify>
-git status -sb          # expect: ## 0.1.2...origin/0.1.2  (in sync)
+git status -sb          # expect: ## 0.1.3...origin/0.1.3  (after first push)
 git pull --ff-only      # only if behind
 git log --oneline -8
 source env.sh           # JAVA_HOME must match THIS machine
 ./gradlew :composeApp:desktopTest --console=plain
 ./gradlew :androidApp:assembleDebug --console=plain
 ```
+
+### History
+
+- **`0.1.2`** — tip before this branch: artist shuffle, cover art, Bing search, batch score, quarantine, etc. (~48 commits from `5d08e0b`).
+- **`0.1.3`** — this line: opened for new work; `VERSION` bumped to `0.1.3`.
 
 ### What landed since the old `0.0.3` handoff (`5d08e0b` → `75399a7`, ~48 commits)
 
