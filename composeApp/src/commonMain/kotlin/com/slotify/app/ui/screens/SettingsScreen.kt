@@ -27,6 +27,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -174,6 +175,39 @@ fun SettingsScreen(state: AppState) {
                     Spacer(Modifier.width(8.dp))
                     Text("Fix song names…")
                 }
+
+                HorizontalDivider()
+
+                // ── YouTube batch minimum match ──────────────────────────────
+                SectionTitle("YouTube batch")
+                Text(
+                    text = "Minimum ranked match score before the batch downloads a hit. " +
+                        "Lower accepts more (riskier); higher only takes strong matches.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val batchPct = (settings.youtubeBatchMinScore * 100).toInt()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Min match",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = "$batchPct%",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                Slider(
+                    value = settings.youtubeBatchMinScore.toFloat(),
+                    onValueChange = { v ->
+                        state.updateSettings { s -> s.copy(youtubeBatchMinScore = v.toDouble()) }
+                    },
+                    valueRange = 0.50f..1.0f,
+                    steps = 49, // 1% increments from 50–100
+                    modifier = Modifier.fillMaxWidth(),
+                )
 
                 HorizontalDivider()
 

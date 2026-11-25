@@ -88,4 +88,28 @@ class SpotifyPublicSearchTest {
         assertEquals(1, hits.size)
         assertEquals("6NQ6lsBqY3B327PbegJgl8", hits[0].id)
     }
+
+    @Test
+    fun allFailedOutcomeFlagsWhenEveryEngineThrew() {
+        val outcome = PublicSearchOutcome(
+            hits = emptyList(),
+            engineNotes = listOf("DDG HTML: HTTP 202", "DDG Lite: timed out", "Bing: HTTP 403"),
+            enginesOk = 0,
+            enginesFailed = 3,
+        )
+        assertTrue(outcome.allFailed)
+        assertTrue(outcome.engineNotes.all { it.contains(":") })
+    }
+
+    @Test
+    fun emptyHitsFromLiveEnginesIsNotAllFailed() {
+        val outcome = PublicSearchOutcome(
+            hits = emptyList(),
+            engineNotes = listOf("DDG HTML: 0 hits (blocked/captcha?)"),
+            enginesOk = 1,
+            enginesFailed = 0,
+        )
+        assertTrue(!outcome.allFailed)
+        assertTrue(outcome.engineNotes.first().contains("blocked"))
+    }
 }

@@ -10,11 +10,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.CloudDownload
@@ -207,8 +210,17 @@ fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
                         },
                     ),
                     supportingText = {
-                        searchStatus?.let {
-                            Text(it, color = MaterialTheme.colorScheme.primary)
+                        searchStatus?.let { s ->
+                            val isError = s.startsWith("Search failed") ||
+                                s.startsWith("Search timed out")
+                            Text(
+                                s,
+                                color = if (isError) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                },
+                            )
                         }
                     },
                 )
@@ -231,9 +243,12 @@ fun PlaylistsScreen(state: AppState, onOpenSettings: () -> Unit) {
                 )
             }
             if (searchHits.isNotEmpty()) {
+                // Bounded + scrollable: up to ~20 rows without pushing the list off-screen.
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .heightIn(max = 320.dp)
+                        .verticalScroll(rememberScrollState())
                         .padding(horizontal = 16.dp, vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {

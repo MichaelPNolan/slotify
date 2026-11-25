@@ -53,7 +53,7 @@ import com.slotify.app.youtube.YoutubeSearchResult
 import com.slotify.app.youtube.YoutubeSource
 import com.slotify.app.youtube.createYoutubeSource
 import com.slotify.app.youtube.preferredDownloadBaseName
-import com.slotify.app.youtube.searchWithFallbacks
+import com.slotify.app.youtube.searchUntilScore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +61,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -242,6 +243,9 @@ class AppState(
     /** True while [batchFetchYoutube] is walking a playlist. */
     val youtubeBatchRunning: StateFlow<Boolean> = _youtubeBatchRunning.asStateFlow()
 
+    /** In-flight batch fetch — cancelled by [stopBatchYoutube]. */
+    private var youtubeBatchJob: Job? = null
+
     private val _importStatus = MutableStateFlow<String?>(null)
     val importStatus: StateFlow<String?> = _importStatus.asStateFlow()
 
@@ -301,9 +305,21 @@ class AppState(
     private val _libraryFollow = MutableStateFlow(false)
     val libraryFollow: StateFlow<Boolean> = _libraryFollow.asStateFlow()
 
-    /** Player-bar title tap: lock follow + (re)center on the current song. */
+    /**
+     * Bumped on every title-tap so a re-tap while already following still
+     * re-runs the Library scroll (StateFlow true→true would not emit).
+     */
+    private val _libraryFollowTick = MutableStateFlow(0)
+    val libraryFollowTick: StateFlow<Int> = _libraryFollowTick.asStateFlow()
+
+    /** Player-bar title tap: lock follow, jump to Library, (re)center on the song. */
     fun engageLibraryFollow() {
         _libraryFollow.value = true
+        _libraryFollowTick.value++
+        // Show the list so the scroll is visible (no-op if already on Library).
+        if (_ui.value.tab != Tab.LIBRARY || _ui.value.detailPlaylistId != null) {
+            selectTab(Tab.LIBRARY)
+        }
     }
 
     /** User dragged the library list — stop auto-following until re-engaged. */
@@ -570,7 +586,7 @@ class AppState(
                 // Keep the failure on youtubeStatus so the Find dialog shows it
                 // in-place — a snackbar alone renders behind the AlertDialog.
                 if (_youtubeStatus.value.isNullOrBlank() ||
-                    _youtubeStatus.value == "Starting download…"
+                    _youtubeStatus.value?.startsWith("Starting download") == true
                 ) {
                     _youtubeStatus.value = "Download failed — see message"
                 }
@@ -600,19 +616,25 @@ class AppState(
 
     /**
      * Walk every unmatched row of [playlistId]: search YouTube, and when the
-     * best ranked result scores **≥ [minScore]** (default 0.85), download +
-     * pin it. Rows below the threshold stay in “To be sourced”.
+     * best ranked result scores **≥ [minScore]** (defaults to
+     * [AppSettings.youtubeBatchMinScore], 0.85), download + pin it. Rows below
+     * the threshold stay in “To be sourced”.
+     *
+     * While running, [stopBatchYoutube] cancels the job (same button toggles).
      */
-    fun batchFetchYoutube(playlistId: String, minScore: Double = 0.85) {
+    fun batchFetchYoutube(
+        playlistId: String,
+        minScore: Double = _settings.value.youtubeBatchMinScore,
+    ) {
         if (!youtube.isSupported) {
             emit("YouTube fetch unavailable — yt-dlp runtime failed to start")
             return
         }
         if (_youtubeBatchRunning.value) {
-            emit("A YouTube batch is already running")
+            emit("A YouTube batch is already running — press Stop")
             return
         }
-        scope.launch {
+        val job = scope.launch {
             _youtubeBatchRunning.value = true
             try {
                 val playlist = _playlists.value.firstOrNull { it.id == playlistId }
@@ -635,23 +657,29 @@ class AppState(
                 var skipped = 0
                 var failed = 0
                 targets.forEachIndexed { i, remote ->
+                    // Cooperative stop between rows (suspend points also cancel).
+                    ensureActive()
                     val n = i + 1
                     _youtubeStatus.value = "Batch $n/${targets.size}: searching “${remote.name}”…"
                     val ranked = runCatching {
-                        // Fallback phrasings — primary query can return 0 from the API
-                        // even when youtube.com finds plenty (e.g. “Hoochie Coochie Man”).
-                        val attempt = searchWithFallbacks(
+                        // Keep trying fallback phrasings until best score ≥ minScore
+                        // (or every variant is exhausted) — first non-empty query
+                        // alone often ranks below the bar.
+                        val attempt = searchUntilScore(
                             youtube = youtube,
                             baseQuery = YoutubeQuery.forTrack(remote),
                             track = remote,
+                            minScore = minScore,
                         )
                         if (attempt.error != null && attempt.results.isEmpty()) throw attempt.error
                         YoutubeRanking.rank(attempt.results, remote)
                     }.getOrElse { e ->
+                        ensureActive()
                         failed++
                         emit("Search failed for “${remote.name}”: ${e.message}")
                         return@forEachIndexed
                     }
+                    ensureActive()
                     val best = ranked.firstOrNull()
                     if (best == null || best.score < minScore) {
                         skipped++
@@ -678,10 +706,23 @@ class AppState(
                 if (_youtubeStatus.value?.startsWith("Batch") == true) {
                     _youtubeStatus.value = null
                 }
+            } catch (e: CancellationException) {
+                _youtubeStatus.value = "Batch stopped"
+                throw e
             } finally {
                 _youtubeBatchRunning.value = false
+                youtubeBatchJob = null
             }
         }
+        youtubeBatchJob = job
+    }
+
+    /** Cancel an in-flight [batchFetchYoutube] (same button as start). */
+    fun stopBatchYoutube() {
+        val job = youtubeBatchJob ?: return
+        if (!job.isActive) return
+        _youtubeStatus.value = "Stopping batch…"
+        job.cancel()
     }
 
     /**
@@ -697,11 +738,24 @@ class AppState(
         // Prefer Spotify artist/title for the on-disk name when the row is known —
         // YouTube title/channel often fails fuzzy match against the playlist.
         val preferredBase = remoteTrack?.let { preferredDownloadBaseName(it) }
+        // First ~20 chars of the *source* media title on Downloading lines (T94).
+        val sourceLabel = result.title.trim().take(20).let { t ->
+            if (result.title.trim().length > 20) "$t…" else t
+        }
         val path = runCatching {
             youtube.download(
                 result = result,
                 targetDir = youtubeDownloadDir(),
-                onProgress = { line -> _youtubeStatus.value = line },
+                onProgress = { line ->
+                    // “Starting download of <file>…” comes from the platform
+                    // with the exact basename it passes to yt-dlp — pass through.
+                    _youtubeStatus.value = when {
+                        line.startsWith("Starting download") -> line
+                        line.startsWith("Downloading") ->
+                            "Downloading “$sourceLabel”${line.removePrefix("Downloading")}"
+                        else -> line
+                    }
+                },
                 baseName = preferredBase,
             ).let { promoteFromStaging(it) }
         }.getOrElse { e ->
@@ -926,13 +980,19 @@ class AppState(
             _playlistSearchRunning.value = true
             _playlistSearchStatus.value = "Searching public playlists for “$q”…"
             try {
-                val hits = SpotifyPublicSearch().searchPlaylists(q, limit = 12)
+                val outcome = SpotifyPublicSearch().searchPlaylists(q, limit = 20)
                 if (!isActive) return@launch
-                _playlistSearchResults.value = hits
-                _playlistSearchStatus.value = if (hits.isEmpty()) {
-                    "No public playlists found for “$q”"
-                } else {
-                    "${hits.size} public playlist(s) — tap Import"
+                val notes = outcome.engineNotes.joinToString(" · ")
+                _playlistSearchResults.value = outcome.hits
+                _playlistSearchStatus.value = when {
+                    outcome.hits.isNotEmpty() ->
+                        "${outcome.hits.size} public playlist(s) — tap Import"
+                    outcome.allFailed ->
+                        "Search failed — $notes"
+                    outcome.enginesFailed > 0 && outcome.hits.isEmpty() ->
+                        "No results — $notes"
+                    else ->
+                        "No public playlists for “$q” — $notes"
                 }
             } catch (e: CancellationException) {
                 // Replaced by a newer Search press — leave UI to the new job.

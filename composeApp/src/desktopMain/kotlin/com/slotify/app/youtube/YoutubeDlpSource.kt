@@ -73,7 +73,6 @@ class YoutubeDlpSource(
         val dir = File(targetDir)
         dir.mkdirs()
 
-        onProgress("Starting download…")
         val name = baseName?.takeIf { it.isNotBlank() } ?: preferredBaseName(result)
         val process = ProcessBuilder(
             binary,
@@ -87,15 +86,32 @@ class YoutubeDlpSource(
         ).redirectErrorStream(true).start()
 
         var lastPct = -1
+        var startReported = false
         val outputLines = mutableListOf<String>()
         process.inputStream.bufferedReader().forEachLine { line ->
             outputLines += line
             if (outputLines.size > 80) outputLines.removeAt(0)
+            // First real path from yt-dlp includes the extension (.opus/.m4a/…).
+            if (!startReported) {
+                val dest = Regex("""Destination:\s*(.+)$""").find(line)
+                    ?.groupValues?.get(1)?.trim()
+                if (dest != null) {
+                    startReported = true
+                    onProgress("Starting download of ${File(dest).name}…")
+                }
+            }
             val pct = Regex("""\[download]\s+(\d+)\.""").find(line)?.groupValues?.get(1)?.toIntOrNull()
             if (pct != null && pct != lastPct && pct % 10 == 0) {
                 lastPct = pct
+                if (!startReported) {
+                    startReported = true
+                    onProgress("Starting download of $name…")
+                }
                 onProgress("Downloading… $pct%")
             }
+        }
+        if (!startReported) {
+            onProgress("Starting download of $name…")
         }
         val exit = waitOrKill(process, 15 * 60_000)
 

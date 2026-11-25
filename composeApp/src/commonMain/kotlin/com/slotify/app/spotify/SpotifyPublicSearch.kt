@@ -27,6 +27,22 @@ data class PublicPlaylistHit(
 }
 
 /**
+ * Outcome of [SpotifyPublicSearch.searchPlaylists].
+ * [engineNotes] always records what each endpoint did — empty hits vs HTTP
+ * failure vs likely block — so the UI can say *where* search stopped.
+ */
+data class PublicSearchOutcome(
+    val hits: List<PublicPlaylistHit>,
+    val engineNotes: List<String>,
+    /** Endpoints that returned HTTP success (even if HTML had no playlist links). */
+    val enginesOk: Int,
+    /** Endpoints that threw (timeout, HTTP error, …). */
+    val enginesFailed: Int,
+) {
+    val allFailed: Boolean get() = enginesFailed > 0 && enginesOk == 0 && hits.isEmpty()
+}
+
+/**
  * Search public Spotify playlists by free-text query (artist, genre, …).
  * Metadata only — never audio.
  *
@@ -37,45 +53,63 @@ class SpotifyPublicSearch(
     private val httpClient: HttpClient = createHttpClient(),
 ) {
     /**
-     * Return unique playlist hits for [query].
-     * Throws when every endpoint fails; empty list when all succeed with no hits.
+     * Playlist hits for [query] plus per-engine diagnostics.
+     * Never throws for “no hits” or “engines blocked” — callers read
+     * [PublicSearchOutcome.engineNotes] / [PublicSearchOutcome.allFailed].
+     * Only unexpected cancellation propagates.
      */
-    suspend fun searchPlaylists(query: String, limit: Int = 12): List<PublicPlaylistHit> {
+    suspend fun searchPlaylists(query: String, limit: Int = 20): PublicSearchOutcome {
         val q = query.trim()
-        if (q.isEmpty()) return emptyList()
+        if (q.isEmpty()) return PublicSearchOutcome(emptyList(), emptyList(), 0, 0)
         // Ktor `parameter` percent-encodes UTF-8 — required for Thai etc.
         val siteQuery = "site:open.spotify.com/playlist $q"
-        var lastError: Throwable? = null
+        val notes = mutableListOf<String>()
+        var ok = 0
+        var failed = 0
 
         for (endpoint in ENDPOINTS) {
+            val host = endpoint.host
             try {
                 val body = endpoint.fetch(httpClient, siteQuery, q)
+                ok++
                 val hits = when (endpoint.parser) {
                     Parser.Ddg -> parseDuckDuckGoPlaylistHits(body, limit)
                     Parser.Bing -> parseBingPlaylistHits(body, limit)
                 }
-                // Prefer real hits; an empty body from a captcha page falls through.
-                if (hits.isNotEmpty()) return hits
+                if (hits.isNotEmpty()) {
+                    notes += "$host: ${hits.size} hit(s)"
+                    // Keep earlier failures in the note trail for diagnostics.
+                    return PublicSearchOutcome(hits, notes, ok, failed)
+                }
+                notes += "$host: 0 hits${blockHint(body)}"
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Throwable) {
-                lastError = e
-                // Cancellation must abort the whole search immediately.
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                failed++
+                val msg = e.message ?: e::class.simpleName ?: "error"
+                notes += "$host: $msg"
             }
         }
-        if (lastError != null) {
-            throw IllegalStateException(
-                "Search failed after ${ENDPOINTS.size} engines: " +
-                    (lastError.message ?: lastError::class.simpleName ?: "unknown"),
-                lastError,
-            )
+        return PublicSearchOutcome(emptyList(), notes, ok, failed)
+    }
+
+    /** Heuristic: engines that CAPTCHA / anomaly-page us return HTML with no SERP. */
+    private fun blockHint(body: String): String {
+        val lower = body.lowercase()
+        return when {
+            "captcha" in lower || "unusual traffic" in lower ||
+                "anomaly" in lower || "challenge-platform" in lower ->
+                " (blocked/captcha?)"
+            body.length < 400 -> " (empty/short page)"
+            else -> ""
         }
-        return emptyList()
     }
 
     private enum class Parser { Ddg, Bing }
 
     private class Endpoint(
         val url: String,
+        val host: String,
         val useSiteQuery: Boolean,
         val parser: Parser,
         val extraParams: Map<String, String> = emptyMap(),
@@ -92,7 +126,7 @@ class SpotifyPublicSearch(
                     extraParams.forEach { (k, v) -> parameter(k, v) }
                 }
                 if (!response.status.isSuccess()) {
-                    throw IllegalStateException("HTTP ${response.status.value} from $url")
+                    throw IllegalStateException("HTTP ${response.status.value}")
                 }
                 response.bodyAsText()
             }
@@ -108,16 +142,19 @@ class SpotifyPublicSearch(
         private val ENDPOINTS = listOf(
             Endpoint(
                 url = "https://html.duckduckgo.com/html/",
+                host = "DDG HTML",
                 useSiteQuery = true,
                 parser = Parser.Ddg,
             ),
             Endpoint(
                 url = "https://lite.duckduckgo.com/lite/",
+                host = "DDG Lite",
                 useSiteQuery = true,
                 parser = Parser.Ddg,
             ),
             Endpoint(
                 url = "https://www.bing.com/search",
+                host = "Bing",
                 useSiteQuery = true,
                 parser = Parser.Bing,
                 extraParams = mapOf("setlang" to "en", "count" to "20"),

@@ -21,12 +21,10 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -68,10 +66,9 @@ import kotlin.math.roundToInt
 fun PlaylistDetailScreen(state: AppState, playlistId: String) {
     val playlists by state.playlists.collectAsState()
     val playlist = playlists.firstOrNull { it.id == playlistId }
+    val settings by state.settings.collectAsState()
     val youtubeStatus by state.youtubeStatus.collectAsState()
     val batchRunning by state.youtubeBatchRunning.collectAsState()
-    val activePlaylistId by state.activePlaylistId.collectAsState()
-    val playerSnap by state.player.snapshot.collectAsState()
     var findTarget by remember { mutableStateOf<RemoteTrack?>(null) }
     var linkTarget by remember { mutableStateOf<RemoteTrack?>(null) }
     var filter by rememberSaveable(playlistId) { mutableStateOf("") }
@@ -144,42 +141,9 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            IconButton(onClick = { state.rematchPlaylist(playlist.id) }) {
-                Icon(Icons.Default.Refresh, contentDescription = "Re-match")
-            }
             // Playlist delete lives on the list view (mark → Delete marked),
-            // not as a one-click trash icon here.
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Button(
-                onClick = { state.togglePlaylistPlay(playlist.id, 0) },
-                enabled = playlist.matchedCount > 0,
-                modifier = Modifier.weight(1f),
-            ) {
-                val playingThis = activePlaylistId == playlist.id && playerSnap.isPlaying
-                Icon(
-                    if (playingThis) Icons.Default.Stop else Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    when {
-                        playingThis -> "Stop"
-                        playlist.matchedCount > 0 -> "Play matches"
-                        else -> "No matches yet"
-                    },
-                )
-            }
-            OutlinedButton(onClick = { state.rematchPlaylist(playlist.id) }) {
-                Text("Re-match")
-            }
+            // not as a one-click trash icon here. Play/rematch live in the
+            // bottom bar + per-row controls — no header duplicates.
         }
 
         // Narrow the list by title / artist / album / file name.
@@ -223,32 +187,49 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
             }
         }
 
-        // Batch: auto-fetch unmatched rows whose best YouTube hit scores ≥ 85%.
-        if (playlist.toBeSourced.isNotEmpty() && state.youtube.isSupported) {
+        // Batch: auto-fetch unmatched rows whose best YouTube hit scores ≥ settings min.
+        // While running the same button stops the batch.
+        if ((playlist.toBeSourced.isNotEmpty() || batchRunning) && state.youtube.isSupported) {
+            val batchPct = (settings.youtubeBatchMinScore * 100).toInt()
             Spacer(Modifier.size(4.dp))
             OutlinedButton(
-                onClick = { state.batchFetchYoutube(playlist.id, minScore = 0.85) },
-                enabled = !batchRunning,
+                onClick = {
+                    if (batchRunning) {
+                        state.stopBatchYoutube()
+                    } else {
+                        state.batchFetchYoutube(playlist.id)
+                    }
+                },
+                enabled = batchRunning || playlist.toBeSourced.isNotEmpty(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp),
             ) {
-                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(
+                    if (batchRunning) Icons.Default.Stop else Icons.Default.Download,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    if (batchRunning) {
-                        "Fetching ≥85% matches…"
-                    } else {
-                        "YouTube batch — fetch matches ≥85%"
+                    when {
+                        batchRunning -> "Stop batch"
+                        else -> "YouTube batch — fetch matches ≥$batchPct%"
                     },
                 )
             }
             youtubeStatus?.let { s ->
-                if (s.startsWith("Batch") || s.startsWith("Search") || s.contains("download")) {
+                if (s.startsWith("Batch") || s.startsWith("Search") ||
+                    s.startsWith("Stopping") || s.contains("download")
+                ) {
                     Text(
                         text = s,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = if (s.startsWith("Batch stopped") || s.startsWith("Download failed")) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                     )
                     if (batchRunning) {

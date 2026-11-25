@@ -95,7 +95,6 @@ object ChaquopyYoutubeSource : YoutubeSource {
         val dir = File(targetDir)
         dir.mkdirs()
 
-        onProgress("Starting download…")
         val name = baseName?.takeIf { it.isNotBlank() } ?: preferredBaseName(result)
         // targetDir comes from Settings music root (youtubeDownloadDir) —
         // e.g. /sdcard/Music/downloads — not a hardcoded Slotify path.
@@ -117,9 +116,24 @@ object ChaquopyYoutubeSource : YoutubeSource {
         }
         val mod = loadHelper()
 
-        val progress = dev.ffmpegkit_maintained.ytdlp.DownloadProgressCallback { pct, eta, _ ->
+        var startReported = false
+        val progress = dev.ffmpegkit_maintained.ytdlp.DownloadProgressCallback { pct, eta, line ->
+            // yt-dlp hook may pass the real path (with extension) as `line`.
+            if (!startReported && !line.isNullOrBlank()) {
+                val looksLikePath = line.contains('/') || line.contains('\\') ||
+                    Regex("""\.\w{2,5}$""").containsMatchIn(line)
+                if (looksLikePath && !line.startsWith("Downloading")) {
+                    startReported = true
+                    val base = line.substringAfterLast('/').substringAfterLast('\\')
+                    onProgress("Starting download of $base…")
+                }
+            }
             val rounded = pct.toInt()
             if (rounded >= 0) {
+                if (!startReported) {
+                    startReported = true
+                    onProgress("Starting download of $name…")
+                }
                 onProgress(
                     if (eta > 0) "Downloading… $rounded% (ETA ${eta}s)"
                     else "Downloading… $rounded%",
@@ -526,7 +540,9 @@ def download(url, out_dir, base_name, progress_cb=None):
                         pct_s = d.get("_percent_str") or "0%"
                         pct = float(str(pct_s).replace("%", "").strip() or 0)
                         eta = int(d.get("eta") or 0)
-                        line = str(d.get("_default_template") or "")
+                        # Prefer real path (includes extension) so UI can show filename.
+                        fn = str(d.get("filename") or "")
+                        line = fn if fn else str(d.get("_default_template") or "")
                         _cb.onProgressUpdate(float(pct), int(eta), line)
                     except Exception:
                         pass

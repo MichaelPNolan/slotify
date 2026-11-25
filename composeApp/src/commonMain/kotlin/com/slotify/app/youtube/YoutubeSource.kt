@@ -145,23 +145,51 @@ suspend fun searchWithFallbacks(
     baseQuery: String,
     track: RemoteTrack,
     max: Int = 8,
+): SearchAttempt = searchUntilScore(
+    youtube = youtube,
+    baseQuery = baseQuery,
+    track = track,
+    max = max,
+    minScore = null,
+)
+
+/**
+ * Like [searchWithFallbacks], but when [minScore] is set keeps trying fallback
+ * phrasings and merging unique hits until the best ranked score clears the
+ * threshold (or every variant is exhausted). First non-empty query alone often
+ * ranks below the bar even when a later phrasing would have matched.
+ */
+suspend fun searchUntilScore(
+    youtube: YoutubeSource,
+    baseQuery: String,
+    track: RemoteTrack,
+    max: Int = 8,
+    minScore: Double? = null,
 ): SearchAttempt {
     val queries = YoutubeQuery.fallbacks(baseQuery, track)
     var lastError: Throwable? = null
     var lastQuery = baseQuery
+    val merged = LinkedHashMap<String, YoutubeSearchResult>()
     for (q in queries) {
         lastQuery = q
         try {
             val hits = youtube.search(q, max = max)
-            if (hits.isNotEmpty()) {
-                return SearchAttempt(query = q, results = hits, error = null)
+            for (h in hits) merged[h.videoId] = h
+            if (merged.isNotEmpty()) {
+                if (minScore == null) {
+                    return SearchAttempt(query = q, results = merged.values.toList(), error = null)
+                }
+                val best = YoutubeRanking.rank(merged.values.toList(), track).firstOrNull()
+                if (best != null && best.score >= minScore) {
+                    return SearchAttempt(query = q, results = merged.values.toList(), error = null)
+                }
             }
         } catch (e: Throwable) {
             lastError = e
             // Keep trying other phrasings — one bad query shouldn’t abort.
         }
     }
-    return SearchAttempt(query = lastQuery, results = emptyList(), error = lastError)
+    return SearchAttempt(query = lastQuery, results = merged.values.toList(), error = lastError)
 }
 
 data class SearchAttempt(
@@ -180,6 +208,38 @@ data class ScoredYoutubeResult(
 object YoutubeRanking {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+
+    /**
+     * Tokens that never identify a recording. Stripped from both sides before
+     * title scoring so “(2011 Remaster) Official Audio” still equals the bare
+     * Spotify title. **“live” is kept** — it distinguishes the version.
+     */
+    private val NOISE_TOKENS = setOf(
+        "remaster", "remastered", "remastering",
+        "mastered", "mastering", "master",
+        "official", "video", "audio", "lyrics", "lyric",
+        "music", "hd", "4k", "1080p", "720p", "visualizer",
+        "version", "edit", "radio", "single", "album",
+    )
+
+    /** Drop noise words + standalone years from a title before comparison. */
+    fun stripNoise(title: String): String {
+        val tokens = title
+            .split(Regex("[^\\p{L}\\p{N}]+"))
+            .map { it.trim() }
+            .filter { t ->
+                if (t.isEmpty()) return@filter false
+                val lt = t.lowercase()
+                if (lt in NOISE_TOKENS) return@filter false
+                // Standalone year (1900–2099) — date/version marker, not the song.
+                if (t.length == 4 && t.all { it.isDigit() }) {
+                    val y = t.toIntOrNull()
+                    if (y != null && y in 1900..2099) return@filter false
+                }
+                true
+            }
+        return tokens.joinToString(" ").trim()
+    }
 
     /**
      * Parse one `yt-dlp --dump-json --flat-playlist` line.
@@ -206,19 +266,50 @@ object YoutubeRanking {
      * graded matcher) weighted against duration proximity (YouTube matches
      * are far more trustworthy when the length lines up — e.g. 78rpm
      * transfers share near-identical durations).
+     *
+     * Channel ≈ artist boosts the score (even slightly lower title scores win
+     * when the uploader is the artist). Near-exact titles are floored so a
+     * moderate duration mismatch alone cannot drop below the batch bar.
      */
     fun rank(
         results: List<YoutubeSearchResult>,
         target: RemoteTrack,
     ): List<ScoredYoutubeResult> = results
         .map { r ->
-            val titleScore = Matcher.matchYouTubeTitleScore(target.name, r.title)
+            val titleScore = Matcher.matchYouTubeTitleScore(
+                stripNoise(target.name),
+                stripNoise(r.title),
+            )
             val durationScore = r.durationMs?.let { Matcher.durationPart(target.durationMs, it) }
-            val score = when (durationScore) {
+            var score = when (durationScore) {
                 null -> titleScore * 0.9 // no duration signal — slight discount, still rankable
                 else -> titleScore * 0.65 + durationScore * 0.35
             }
+            // Exact-enough title: duration noise (intro/outro, ads) must not
+            // push a true hit under a ~85% batch threshold.
+            if (titleScore >= 0.97) score = maxOf(score, 0.92)
+            score += channelArtistBoost(r, target)
             ScoredYoutubeResult(r, score.coerceIn(0.0, 1.0))
         }
-        .sortedByDescending { it.score }
+        .sortedWith(
+            compareByDescending<ScoredYoutubeResult> { it.score }
+                .thenByDescending { channelArtistBoost(it.result, target) },
+        )
+
+    /**
+     * +0.12 when the channel is (or contains) the track artist — user prefers
+     * the official/artist upload even if another hit scores slightly higher.
+     */
+    private fun channelArtistBoost(result: YoutubeSearchResult, target: RemoteTrack): Double {
+        val channel = result.channel?.trim().orEmpty()
+        if (channel.isEmpty()) return 0.0
+        val chLower = channel.lowercase()
+        val artists = target.artists.map { it.name.trim() }.filter { it.isNotEmpty() }
+        if (artists.isEmpty()) return 0.0
+        val hit = artists.any { a ->
+            val al = a.lowercase()
+            al.length >= 3 && (chLower == al || chLower.contains(al))
+        }
+        return if (hit) 0.12 else 0.0
+    }
 }

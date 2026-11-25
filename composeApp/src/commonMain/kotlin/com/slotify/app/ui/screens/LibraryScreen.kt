@@ -64,6 +64,7 @@ fun LibraryScreen(state: AppState) {
     val playlists by state.playlists.collectAsState()
     val settings by state.settings.collectAsState()
     val followEnabled by state.libraryFollow.collectAsState()
+    val followTick by state.libraryFollowTick.collectAsState()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val isDragged by listState.interactionSource.collectIsDraggedAsState()
@@ -89,11 +90,23 @@ fun LibraryScreen(state: AppState) {
         }
     }
 
-    // While following, recenter whenever the current song (or list) changes.
-    LaunchedEffect(followEnabled, nowPlaying?.path, filtered) {
+    fun playingIndex(list: List<LocalTrack>): Int {
+        val np = nowPlaying ?: return -1
+        list.indexOfFirst { it.filePath == np.path }.let { if (it >= 0) return it }
+        list.indexOfFirst {
+            com.slotify.app.data.resolveSymlinkTarget(it.filePath) == np.path
+        }.let { if (it >= 0) return it }
+        // Last resort: same title (and artist when both sides have one).
+        return list.indexOfFirst {
+            it.displayTitle == np.title &&
+                (np.artist.isBlank() || it.displayArtist == np.artist)
+        }
+    }
+
+    // Follow + every title-tap tick: jump to the playing row.
+    LaunchedEffect(followEnabled, followTick, nowPlaying?.path, nowPlaying?.title, filtered) {
         if (!followEnabled) return@LaunchedEffect
-        val path = nowPlaying?.path ?: return@LaunchedEffect
-        val idx = filtered.indexOfFirst { it.filePath == path }
+        val idx = playingIndex(filtered)
         if (idx >= 0) listState.animateScrollToItem(idx)
     }
 
@@ -120,7 +133,7 @@ fun LibraryScreen(state: AppState) {
                         state.showMessage("Nothing playing")
                         return@FilledTonalButton
                     }
-                    val idx = filtered.indexOfFirst { it.filePath == path }
+                    val idx = playingIndex(filtered)
                     if (idx < 0) {
                         state.showMessage("Playing track is hidden by search")
                     } else {
@@ -183,7 +196,14 @@ fun LibraryScreen(state: AppState) {
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
                 ) {
                     itemsIndexed(filtered, key = { _, it -> it.filePath }) { index, track ->
-                        val isCurrent = nowPlaying?.path == track.filePath
+                        val npPath = nowPlaying?.path
+                        val isCurrent = npPath != null && (
+                            track.filePath == npPath ||
+                                com.slotify.app.data.resolveSymlinkTarget(track.filePath) == npPath ||
+                                (nowPlaying?.title == track.displayTitle &&
+                                    (nowPlaying!!.artist.isBlank() ||
+                                        track.displayArtist == nowPlaying!!.artist))
+                            )
                         val isPlayed = track.filePath in playedKeys
                         val markDimmed = track.mark != null
                         val titleColor = when {

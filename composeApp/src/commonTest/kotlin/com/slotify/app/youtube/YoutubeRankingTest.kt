@@ -113,6 +113,25 @@ class YoutubeRankingTest {
         assertTrue(variants.any { it.contains("Muddy Waters") && it.contains("Hoochie") })
     }
 
+    // ── stripNoise ─────────────────────────────────────────────────────
+
+    @Test
+    fun stripNoiseDropsRemasterYearAndOfficialButKeepsLive() {
+        assertEquals(
+            "Take Five",
+            YoutubeRanking.stripNoise("Take Five (2011 Remaster) Official Audio"),
+        )
+        assertEquals(
+            "Hallelujah",
+            YoutubeRanking.stripNoise("Hallelujah 1984 radio version"),
+        )
+        // “live” is meaningful — must survive.
+        assertEquals(
+            "Take Five live",
+            YoutubeRanking.stripNoise("Take Five (live) Remastered"),
+        )
+    }
+
     // ── rank ─────────────────────────────────────────────────────────
 
     @Test
@@ -132,6 +151,55 @@ class YoutubeRankingTest {
         assertEquals("e", ranked.first().result.videoId)
         assertTrue(ranked.first().score >= 0.85, "exact+duration should score high, got ${ranked.first().score}")
         assertTrue(ranked.last().score < 0.4, "junk should score low, got ${ranked.last().score}")
+    }
+
+    @Test
+    fun noisyTitleWithDurationStillClearsEightyFive() {
+        // Pre-fix: remaster/year/official tokens + duration drag often landed ~0.70–0.84.
+        val noisy = YoutubeSearchResult(
+            "n",
+            "Dave Brubeck Take Five (2011 Remaster) Official Audio",
+            durationSec = 325,
+            channel = "Craft Recordings",
+        )
+        val ranked = YoutubeRanking.rank(listOf(noisy), target)
+        assertTrue(
+            ranked.first().score >= 0.85,
+            "noise-stripped exact title should clear 85%, got ${ranked.first().score}",
+        )
+    }
+
+    @Test
+    fun exactTitleWithWeakDurationStillClearsEightyFive() {
+        // title exact, duration 60s off → old formula 1.0*0.65+0.2*0.35=0.72
+        val drifted = YoutubeSearchResult("d", "Take Five", durationSec = 385)
+        val ranked = YoutubeRanking.rank(listOf(drifted), target)
+        assertTrue(
+            ranked.first().score >= 0.85,
+            "exact title floor should clear 85% despite duration drift, got ${ranked.first().score}",
+        )
+    }
+
+    @Test
+    fun artistChannelBeatsSlightlyHigherStrangerChannel() {
+        val stranger = YoutubeSearchResult(
+            "s",
+            "Take Five Dave Brubeck",
+            durationSec = 325,
+            channel = "Jazz Compilations 24/7",
+        )
+        val official = YoutubeSearchResult(
+            "o",
+            "Take Five",
+            durationSec = 325,
+            channel = "Dave Brubeck",
+        )
+        val ranked = YoutubeRanking.rank(listOf(stranger, official), target)
+        assertEquals("o", ranked.first().result.videoId)
+        assertTrue(
+            ranked.first().score >= ranked.last().score,
+            "artist channel must not rank below a stranger upload",
+        )
     }
 
     @Test

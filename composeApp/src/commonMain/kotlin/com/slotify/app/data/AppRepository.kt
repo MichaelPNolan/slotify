@@ -16,6 +16,11 @@ data class AppSettings(
     val libraryRoots: List<String> = emptyList(),
     val spotifyClientId: String = "",
     val matchThreshold: Double = 0.75,
+    /**
+     * Minimum ranked YouTube score the batch fetch will download (0.0–1.0).
+     * Settings UI shows this as a percent; default 85%.
+     */
+    val youtubeBatchMinScore: Double = 0.85,
     /** App output volume, 0.0–1.0. Persists across launches. */
     val volume: Float = 1.0f,
     /** Legal notice acknowledged — suppresses the first-run dialog. */
