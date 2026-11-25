@@ -211,6 +211,53 @@ fun SettingsScreen(state: AppState) {
 
                 HorizontalDivider()
 
+                // ── YouTube cookies.txt (yt-dlp auth — not Spotify) ─────────
+                SectionTitle("YouTube cookies")
+                val ytCookies by state.youtubeCookiesStatus.collectAsState()
+                Text(
+                    text = "Optional Netscape cookies.txt for yt-dlp when YouTube says " +
+                        "“Sign in to confirm you’re not a bot.” Copied into app-private " +
+                        "storage only — never public Downloads. Unrelated to Spotify " +
+                        "browser session cookies. Contents are never shown.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = ytCookies,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (ytCookies.startsWith("Configured")) {
+                        MaterialTheme.colorScheme.tertiary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { state.importYoutubeCookiesFromPicker() },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(Icons.Default.FileOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Import cookies.txt…")
+                    }
+                    OutlinedButton(
+                        onClick = { state.clearYoutubeCookiesFromSettings() },
+                        enabled = ytCookies.startsWith("Configured"),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Clear", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+
+                HorizontalDivider()
+
                 // ── Music folder: export/import playlists (symlink stage = desktop only)
                 SectionTitle("Music folder")
                 if (com.slotify.app.data.supportsSymlinkStaging()) {

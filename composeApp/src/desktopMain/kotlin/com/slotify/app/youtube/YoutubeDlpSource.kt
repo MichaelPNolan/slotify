@@ -51,6 +51,8 @@ class YoutubeDlpSource(
                 "--flat-playlist",
                 "--playlist-end", max.toString(),
                 "--no-warnings",
+                *com.slotify.app.platform.youtubeCookiesPathOrNull()
+                    ?.let { arrayOf("--cookies", it) }.orEmpty(),
                 "ytsearch$max:$query",
             ).redirectErrorStream(false).start()
 
@@ -74,6 +76,10 @@ class YoutubeDlpSource(
         dir.mkdirs()
 
         val name = baseName?.takeIf { it.isNotBlank() } ?: preferredBaseName(result)
+        // Optional private cookies.txt (same Settings import as Android). Path only.
+        val cookieArgs = com.slotify.app.platform.youtubeCookiesPathOrNull()
+            ?.let { listOf("--cookies", it) }
+            .orEmpty()
         val process = ProcessBuilder(
             binary,
             "-f", "251/140/bestaudio",
@@ -82,6 +88,7 @@ class YoutubeDlpSource(
             "--newline",
             "--no-warnings",
             "-o", "${dir.absolutePath}/$name.%(ext)s",
+            *cookieArgs.toTypedArray(),
             result.url,
         ).redirectErrorStream(true).start()
 

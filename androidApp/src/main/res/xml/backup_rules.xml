@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Exclude YouTube cookies.txt (and any other secrets/) from auto backup.
+  Domain "file" paths are relative to getFilesDir() on API 31+ / full backup.
+-->
+<full-backup-content>
+    <exclude domain="file" path="secrets" />
+    <exclude domain="file" path="secrets/" />
+</full-backup-content>

@@ -20,6 +20,7 @@ import com.slotify.app.platform.launchStorageAccessRequest
 import com.slotify.app.platform.resolvePickedAudioToPath
 import com.slotify.app.platform.setClipboardContext
 import com.slotify.app.platform.storageAccessRequestor
+import com.slotify.app.platform.youtubeCookiesPicker
 import com.slotify.app.spotify.JsonFileTokenStorage
 import com.slotify.app.state.AppState
 import com.slotify.app.state.createSpotifyPort
@@ -51,6 +52,7 @@ class MainActivity : ComponentActivity() {
     private var pendingJsonPick: CompletableDeferred<String?>? = null
     private var pendingAudioPick: CompletableDeferred<String?>? = null
     private var pendingTreePick: CompletableDeferred<Uri?>? = null
+    private var pendingCookiesPick: CompletableDeferred<String?>? = null
 
     private val jsonPicker =
         registerForActivityResult(OpenDocumentInMusic()) { uri: Uri? ->
@@ -71,6 +73,13 @@ class MainActivity : ComponentActivity() {
             pendingTreePick = null
         }
 
+    /** YouTube cookies.txt — any readable document; copied into filesDir/secrets. */
+    private val cookiesPicker =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            pendingCookiesPick?.complete(uri?.toString())
+            pendingCookiesPick = null
+        }
+
     private var appState: AppState? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -81,6 +90,7 @@ class MainActivity : ComponentActivity() {
 
         jsonFilePicker = { awaitPlaylistJsonPick() }
         audioFilePicker = { awaitAudioFilePick() }
+        youtubeCookiesPicker = { awaitYoutubeCookiesPick() }
         // YouTube download / promote need File write under the music folder.
         storageAccessRequestor = {
             runOnUiThread {
@@ -112,10 +122,13 @@ class MainActivity : ComponentActivity() {
         pendingAudioPick = null
         pendingTreePick?.complete(null)
         pendingTreePick = null
+        pendingCookiesPick?.complete(null)
+        pendingCookiesPick = null
         appState?.release()
         appState = null
         jsonFilePicker = null
         audioFilePicker = null
+        youtubeCookiesPicker = null
         storageAccessRequestor = null
         androidAppContext = null
         super.onDestroy()
@@ -182,6 +195,18 @@ class MainActivity : ComponentActivity() {
         } ?: return null
         SafMusic.saveTree(tree)
         return tree
+    }
+
+    /** SAF pick for Netscape cookies.txt (`content://` or null). Copy is separate. */
+    private fun awaitYoutubeCookiesPick(): String? {
+        val deferred = CompletableDeferred<String?>()
+        runOnUiThread {
+            pendingCookiesPick = deferred
+            cookiesPicker.launch(arrayOf("text/plain", "text/*", "*/*"))
+        }
+        return runBlocking {
+            withContext(Dispatchers.Default) { deferred.await() }
+        }
     }
 
     private fun requestAudioPermissionIfMissing() {

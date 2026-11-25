@@ -33,6 +33,15 @@ import com.slotify.app.platform.pickAudioFile
 import com.slotify.app.platform.readBrowserSpDcCookie
 import com.slotify.app.platform.hasSharedMusicWriteAccess
 import com.slotify.app.platform.requestSharedMusicWriteAccess
+import com.slotify.app.platform.clearYoutubeCookies
+import com.slotify.app.platform.importYoutubeCookies
+import com.slotify.app.platform.isYoutubeAuthFailure
+import com.slotify.app.platform.pickYoutubeCookiesFile
+import com.slotify.app.platform.youtubeAuthFailureMessage
+import com.slotify.app.platform.youtubeCookiesConfigured
+import com.slotify.app.platform.youtubeCookiesPathOrNull
+import com.slotify.app.platform.youtubeCookiesStatusLabel
+import com.slotify.app.platform.YoutubeCookiesImport
 import com.slotify.app.playback.ArtistSession
 import com.slotify.app.playback.ArtistSourceItem
 import com.slotify.app.playback.AudioPlayer
@@ -424,6 +433,56 @@ class AppState(
         scope.launch { repository.saveSettings(next) }
     }
 
+    // ── YouTube cookies.txt (NOT Spotify browser sp_dc) ──────────────
+
+    private val _youtubeCookiesStatus = MutableStateFlow(youtubeCookiesStatusLabel())
+    /** Settings status line — never cookie contents. */
+    val youtubeCookiesStatus: StateFlow<String> = _youtubeCookiesStatus.asStateFlow()
+
+    private fun refreshYoutubeCookiesStatus() {
+        _youtubeCookiesStatus.value = youtubeCookiesStatusLabel()
+    }
+
+    /** SAF/desktop pick → private copy. Replaces any previous cookies file. */
+    fun importYoutubeCookiesFromPicker() {
+        scope.launch {
+            val source = withContext(Dispatchers.IO) {
+                runCatching { pickYoutubeCookiesFile() }.getOrNull()
+            }
+            if (source.isNullOrBlank()) {
+                // User cancelled — keep existing status.
+                return@launch
+            }
+            val result = withContext(Dispatchers.IO) {
+                runCatching { importYoutubeCookies(source) }
+                    .getOrElse { e -> YoutubeCookiesImport.Failed(e.message ?: "import failed") }
+            }
+            when (result) {
+                is YoutubeCookiesImport.Ok -> {
+                    refreshYoutubeCookiesStatus()
+                    emit("YouTube cookies imported (${result.byteCount} bytes) — contents hidden")
+                }
+                is YoutubeCookiesImport.Failed -> {
+                    // Do not echo file paths that might include private storage layout beyond reason.
+                    emit("YouTube cookies import failed: ${result.reason}")
+                }
+                YoutubeCookiesImport.Cancelled -> Unit
+            }
+        }
+    }
+
+    /** Delete the private cookies copy (yt-dlp then runs unauthenticated). */
+    fun clearYoutubeCookiesFromSettings() {
+        scope.launch {
+            withContext(Dispatchers.IO) { clearYoutubeCookies() }
+            refreshYoutubeCookiesStatus()
+            emit("YouTube cookies cleared — downloads are unauthenticated again")
+        }
+    }
+
+    /** Absolute private path for yt-dlp `cookiefile` (null = unauthenticated). */
+    fun youtubeCookiesPathForYtDlp(): String? = youtubeCookiesPathOrNull()
+
     // ── Library ──────────────────────────────────────────────────────
 
     fun scanLibrary() {
@@ -759,9 +818,20 @@ class AppState(
                 baseName = preferredBase,
             ).let { promoteFromStaging(it) }
         }.getOrElse { e ->
-            val detail = e.message?.take(400) ?: e::class.java.simpleName
             // Status only — a snackbar would render *behind* Find-on-YouTube.
-            _youtubeStatus.value = "Download failed: $detail"
+            // Auth failures get dedicated copy; never log/include cookie path.
+            val chain = generateSequence(e) { it.cause }
+                .map { it.message ?: it::class.java.simpleName }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .joinToString(" · ")
+            _youtubeStatus.value = when {
+                isYoutubeAuthFailure(chain) ->
+                    youtubeAuthFailureMessage(youtubeCookiesConfigured())
+                else -> "Download failed: " + (chain.take(400).ifBlank {
+                    e.message ?: e::class.java.simpleName
+                })
+            }
             return false
         }
 

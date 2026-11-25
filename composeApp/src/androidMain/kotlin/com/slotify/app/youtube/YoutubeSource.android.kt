@@ -68,9 +68,10 @@ object ChaquopyYoutubeSource : YoutubeSource {
             val q = query.trim()
             if (q.isEmpty()) return@withContext emptyList()
             val mod = loadHelper()
+            val cookiePath = com.slotify.app.platform.youtubeCookiesPathOrNull()
             // Python returns a JSON *string* — never a list object (Chaquopy
             // cannot convert a raw Python list into a Java List here).
-            val raw = runCatching { mod.callAttr("search", q, max) }
+            val raw = runCatching { mod.callAttr("search", q, max, cookiePath) }
                 .getOrElse { e -> throw IllegalStateException(searchFailureMessage(q, e), e) }
             // PyObject for a Python str → toString() is the JSON body.
             val json = raw.toString()
@@ -115,6 +116,8 @@ object ChaquopyYoutubeSource : YoutubeSource {
             )
         }
         val mod = loadHelper()
+        // Private cookies.txt when configured — path only, never contents in logs.
+        val cookiePath = com.slotify.app.platform.youtubeCookiesPathOrNull()
 
         var startReported = false
         val progress = dev.ffmpegkit_maintained.ytdlp.DownloadProgressCallback { pct, eta, line ->
@@ -148,9 +151,10 @@ object ChaquopyYoutubeSource : YoutubeSource {
                 dir.absolutePath,
                 name,
                 progress,
+                cookiePath,
             )
         }.getOrElse { e ->
-            throw IllegalStateException(downloadFailureMessage(e), e)
+            throw IllegalStateException(downloadFailureMessage(e, cookiePath != null), e)
         }
         // Chaquopy: pass a Python str path (never convert lists on this edge).
         val pyStr = Python.getInstance().getModule("builtins").callAttr("str", rawPathObj)
@@ -174,17 +178,24 @@ object ChaquopyYoutubeSource : YoutubeSource {
         saved.absolutePath
     }
 
-    private fun downloadFailureMessage(e: Throwable): String {
+    private fun downloadFailureMessage(e: Throwable, hasCookies: Boolean): String {
         val chain = generateSequence(e) { it.cause }
             .map { it.message ?: it::class.java.simpleName }
             .filter { it.isNotBlank() }
             .distinct()
             .joinToString(" · ")
+        // Strip anything that might look like a private path if it ever leaked in.
+        val safeChain = chain
+            .replace(Regex("""[^\s:]*secrets/[^\s:]*"""), "secrets/…")
+            .replace(Regex("""cookiefile[=:]\s*\S+"""), "cookiefile=…")
+        if (com.slotify.app.platform.isYoutubeAuthFailure(safeChain)) {
+            return com.slotify.app.platform.youtubeAuthFailureMessage(hasCookies)
+        }
         // Keep HTTP status visible — YouTube 403 is the common Android case.
-        val http = Regex("""HTTP Error \d+""").find(chain)?.value
+        val http = Regex("""HTTP Error \d+""").find(safeChain)?.value
         return when {
-            http != null -> "yt-dlp $http — ${chain.take(300)}"
-            else -> "yt-dlp download failed: ${chain.take(300)}"
+            http != null -> "yt-dlp $http — ${safeChain.take(300)}"
+            else -> "yt-dlp download failed: ${safeChain.take(300)}"
         }
     }
 
@@ -452,7 +463,15 @@ import json
 import os
 
 
-def search(query, max_n=8):
+def _apply_cookie(opts, cookiefile):
+    # Path only — never log cookiefile or file contents.
+    if cookiefile and str(cookiefile).strip():
+        p = str(cookiefile)
+        if os.path.isfile(p) and os.path.getsize(p) > 0:
+            opts["cookiefile"] = p
+
+
+def search(query, max_n=8, cookiefile=None):
     # Return a JSON *string* (never a Python list) for Chaquopy callAttr.
     import yt_dlp
     n = max(1, min(int(max_n), 25))
@@ -464,6 +483,7 @@ def search(query, max_n=8):
         "noplaylist": True,
         "playlistend": n,
     }
+    _apply_cookie(opts, cookiefile)
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info("ytsearch%d:%s" % (n, str(query)), download=False)
@@ -488,7 +508,7 @@ def search(query, max_n=8):
     return json.dumps(out)
 
 
-def download(url, out_dir, base_name, progress_cb=None):
+def download(url, out_dir, base_name, progress_cb=None, cookiefile=None):
     # out_dir is an absolute Android path (e.g. /sdcard/Music/Slotify/downloads).
     # yt-dlp only needs normal filesystem write access there — not SAF.
     import yt_dlp
@@ -510,6 +530,7 @@ def download(url, out_dir, base_name, progress_cb=None):
         "bestaudio/best",
     ]
     last_err = None
+    auth_failed = False
     for clients in client_attempts:
         for fmt in format_attempts:
             opts = {
@@ -530,6 +551,7 @@ def download(url, out_dir, base_name, progress_cb=None):
                     "Referer": "https://www.youtube.com/",
                 },
             }
+            _apply_cookie(opts, cookiefile)
             if clients:
                 opts["extractor_args"] = {"youtube": {"player_client": clients}}
             if progress_cb is not None:
@@ -555,13 +577,21 @@ def download(url, out_dir, base_name, progress_cb=None):
             except Exception as e:
                 last_err = e
                 msg = str(e)
+                # Bot-check / sign-in: changing player_client will not help —
+                # stop immediately so Settings can guide cookie import/refresh.
+                if ("Sign in to confirm" in msg) or ("not a bot" in msg) or ("Use --cookies" in msg):
+                    auth_failed = True
+                    break
                 # Only retry on auth/URL rejection — not on missing-file bugs.
                 if "403" not in msg and "401" not in msg and "Forbidden" not in msg:
                     if "HTTP Error" not in msg:
                         raise
                 continue
-        if last_err is None:
+        if last_err is None or auth_failed:
             break
+    if auth_failed:
+        # Message text is enough for Kotlin isYoutubeAuthFailure — no cookie path.
+        raise RuntimeError("Sign in to confirm you're not a bot. Use --cookies for the authentication.")
     if last_err is not None:
         raise RuntimeError("HTTP download failed after client retries: %s" % last_err)
 
