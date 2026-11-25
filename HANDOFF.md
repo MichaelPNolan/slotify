@@ -3,47 +3,47 @@
 Read this (plus `README.md` setup) before continuing on a new machine.
 Source of truth for long-lived notes: project memory `MEMORY.md` under MiMoCode’s data dir; this file is the **in-repo** distilled copy so a fresh clone is enough.
 
-**Branch / release line:** `0.0.3` (`VERSION` file). Remote: `https://github.com/MichaelPNolan/slotify.git` (`origin/0.0.3`). Do not re-init git or re-push unless the remote/branch changes.
+**Branch / release line:** **`0.1.2`** (checked out here). Remote: `https://github.com/MichaelPNolan/slotify.git` (`origin/0.1.2`). Older lines: `0.0.3` (pre–artist-shuffle / cover-art), `main`. Do not re-init git or force-push unless the user asks.
+
+> `VERSION` file may still say `0.0.3` — **trust the git branch**, not `VERSION`, until someone bumps it on purpose.
 
 ---
 
-## Catch-up on this station (0.0.3 already local)
+## Catch-up on this station (branch `0.1.2`)
 
-This host **already has the repo on `0.0.3`** — no re-clone. To get the latest:
+This host **already has the repo**. No re-clone:
 
 ```bash
 cd <slotify>
-git pull --ff-only        # or: git fetch origin && git merge --ff-only origin/0.0.3
-git log --oneline -5      # tip should be 0fe3fd4 or newer
-```
-
-Then `source env.sh` (verify `JAVA_HOME` matches **this** machine’s JDK) and re-run tests if anything looks off:
-
-```bash
+git status -sb          # expect: ## 0.1.2...origin/0.1.2  (in sync)
+git pull --ff-only      # only if behind
+git log --oneline -8
+source env.sh           # JAVA_HOME must match THIS machine
 ./gradlew :composeApp:desktopTest --console=plain
 ./gradlew :androidApp:assembleDebug --console=plain
 ```
 
-### What changed since you last worked here (`b0f09ec` → `0fe3fd4`)
+### What landed since the old `0.0.3` handoff (`5d08e0b` → `75399a7`, ~48 commits)
 
-| Commit | Theme |
-|--------|--------|
-| `b0f09ec` | Android Link file SAF path resolve + cross-platform fuzzy (filename axis) |
-| **`0fe3fd4`** (this handoff) | **Android yt-dlp**, **Spotify download naming/tags**, **SAF Music-tree picker**, README/HANDOFF refresh |
+| Theme | Branch / area | Summary |
+|--------|----------------|---------|
+| **Artist shuffle + library session** | `0.1.0` | Four playback modes, played set, marks, add-to-playlist — see `reports/artist-shuffle.md` |
+| **Cover-art backdrop** | `0.1.1` | Embedded art behind content; opus parser — see `reports/cover-art-backdrop.md` |
+| **Android YT path + write grant** | 0.1.x | Download into Settings music root; `MANAGE_EXTERNAL_STORAGE`; 403 retries |
+| **Playback fixes** | 0.1.x | Row tap starts that row; Android `isPlaying` icon bug; corrupt-file quarantine |
+| **Spotify public search** | `0.1.2` | DDG → DDG Lite → **Bing** + bare-URL fallback; per-engine status |
+| **UI polish** | `0.1.2` | `LinkFileDialog`, `LegalDisclaimer`, PKCE await plumbing **removed** from Settings |
+| **Batch YT** | `0.1.2` | Configurable min score; search fallbacks until bar clears; same button stops batch |
+| **Rename / heal** | 0.1.x | Editable song-name walk; pins survive; broken rows → To be sourced + held |
 
-**Feature detail (`0fe3fd4`):**
+Design trail for those features: `specs/`, `plans/`, `reports/` in-repo.
 
-1. **Android YouTube is real** — `dev.ffmpegkit-maintained:yt-dlp-android:2.0.2` (Chaquopy) + `ffmpeg-kit-audio`. Desktop still uses **system `yt-dlp`** (`YoutubeDlpSource`) — do not “unify” them. Helper Python `slotify_ytdlp.py` lives in app `filesDir` (stock runner can’t dump search JSON). Remux only (`-c:a copy`) into whitelist ext. ABIs **arm64-v8a + x86_64**. Debug APK ~66MB.
+### Architecture rows already current on this branch
 
-2. **Downloads named/tagged from Spotify, not YouTube** — when a playlist row is known: file → `Artist - Title` via `preferredDownloadBaseName`, tags overwritten via `writeAudioMetadata` (jaudiotagger, both platforms). Fixes fuzzy match against YouTube title/channel. Older downloads still wrong — re-fetch/re-link those rows.
-
-3. **Android Link file = SAF tree** — first use: grant Music folder once (`SafMusic`, persisted). Document picker opens **inside** Music (`EXTRA_INITIAL_URI`). Unresolvable picks keep `content://` (player + scanner + matcher handle URI; `LocalTrack.nameForFilenameParse` uses `displayPath`). No forced copy into Slotify.
-
-4. **New files:** `YoutubeSource.android.kt` (rewritten), `SafMusic.kt`, `OpenDocumentInMusic.kt`, `AudioMetadata.kt` + desktop/android actuals, `PreferredDownloadBaseNameTest`. Deps in `gradle/libs.versions.toml`. `env.sh` JDK path on the **other** host was `jdk-21.0.13+9` — confirm yours.
-
-**Still not device-proven until the user says so:** Android YouTube, SAF Link file grant, phone transfer, batch fetch.
-
-**Runtime state** (this station’s, not in git): `~/.local/share/slotify/`, Floorp `sp_dc`, Spotify Client ID in Settings, phone SAF grant. MiMoCode memory may lag — this file is the in-repo catch-up.
+- **YouTube Android vs desktop — do not unify** (user): Chaquopy on phone, system `yt-dlp` on Linux. Download dir = Settings `libraryRoots` first (e.g. `/sdcard/Music`), staging `<root>/downloads`, promote to music root (not hardcoded `Slotify/`). Errors go to **`youtubeStatus` only** while Find dialog is open (snackbar hides behind AlertDialog). 403 → `player_client` × format retries.
+- **Android write grant:** `READ_MEDIA_AUDIO` is not enough for `/sdcard/Music` writes — `MANAGE_EXTERNAL_STORAGE` + `requestSharedMusicWriteAccess()` (All files access Settings) on EPERM.
+- **Android play icon:** optimistic `isPlaying` on load/play (prepareAsync used to leave the button on “Play”).
+- **Spotify Settings:** connection / PKCE / browser-cookie **probe section removed**; URL paste + public search remain. Manual `sp_dc`/embed cookie path still used for private playlist **import** via Floorp reader on desktop.
 
 ---
 
@@ -66,9 +66,9 @@ Compose Multiplatform music player: **desktop-first** (AMD64; authoring host Man
 
 Workflow: Spotify playlist **metadata** → fuzzy-match local library → unmatched tracks: **Link file** or **YouTube download** → play with vlcj (desktop) / MediaPlayer (Android).
 
-Also first-class on 0.0.3: **public playlist search**, **batch YouTube sourcing**, **playlist trash**, **row skip/delete marks**, **playback resume + shuffle**, and **phone transfer** of playlists + pins via portable JSON under the Music root.
+Also first-class: **public playlist search**, **batch YouTube**, **playlist trash**, **row marks**, **playback resume**, **phone transfer**, then on **0.1.x**: **four playback modes + artist blocks**, **library session UI**, **cover-art backdrop**, **corrupt-file quarantine**, **editable rename / heal**, **Bing public search**.
 
-User confirmed earlier (2026-10-27): desktop live (scan→match→play), playlist URL import, Link file + YouTube pick, APK builds. Releases 0.0.2 / 0.0.3 (2026-11-22) added the features below; later same day: **Android yt-dlp (Chaquopy)**, **Spotify-based download naming/tags**, **SAF Music-tree Link file**. **Live click-through on device may still be pending** — treat “coded” ≠ “user-verified” unless they say otherwise.
+User confirmed earlier (2026-10-27): desktop live. 0.0.2–0.0.3 (2026-11-22): Android yt-dlp, Spotify download naming, SAF Link file. 0.1.0–0.1.2 (2026-11-23): artist shuffle, cover art, Android write grant, playback/search polish. Treat “coded” ≠ “user-verified” unless they say otherwise.
 
 ---
 
@@ -81,29 +81,29 @@ User confirmed earlier (2026-10-27): desktop live (scan→match→play), playlis
 | Desktop launch | `./run.sh` → `source env.sh` → `./gradlew :composeApp:run`. |
 | Desktop window (tiling WM) | Host is **niri**. Full-window Scaffold (`fillMaxSize`); soft open **1100×740**. Known: AWT can miss XWayland resizes (JNA size poll in `Main.kt`). No niri window-rule workarounds. |
 | Tags / scan | Shared walk: `distinctLibraryRoots` + `collectAudioFiles` (canonical dedupe, no double-count of nested roots). Desktop: jaudiotagger. **Android: jaudiotagger first** (parity with desktop titles/artists/ISRC), MediaMetadataRetriever fallback only. Single-file `readTrack` for Link/YouTube index. |
-| Playback | Desktop: vlcj. Android: MediaPlayer. Per-row play/stop toggle; same-row = pause/resume. **Android `isPlaying` (user bug 2026-11-23):** `prepareAsync` used to `start()` without setting `isPlaying=true`, so the playlist button stayed “Play” while audio ran — first click only flipped the icon, second click paused. Fix: optimistic `isPlaying` on `load`/`play`, and set `true` in `OnPreparedListener` after `start()`. |
-| Persistence | JSON under app data (`~/.local/share/slotify/` desktop; `filesDir` Android). Atomic tmp+rename. `updateSettings` transforms **on-disk** state. Audio lives under managed music dir, not app data. New: **`playback.json`** (resume index + position + shuffle + active playlist). |
-| Managed music dir | Desktop `~/Music/Slotify`, Android `/sdcard/Music/Slotify` (`defaultSlotifyMusicDir()`). Final named audio at root; `downloads/` + `conversions/` staging only (manual purge). No hash store. Auto-added to `libraryRoots` if uncovered. |
-| Spotify | Embed URL import primary; public search via DuckDuckGo HTML; PKCE secondary; `sp_dc` cookie for private embeds. |
+| Playback | Desktop: vlcj. Android: MediaPlayer. **Four modes** (`PlaybackMode`): Linear → Shuffle → Artist(2) → Artist(★) via player-bar cycle + badge. Artist modes use `ArtistSession` (random artist blocks; **played set is in-memory** — app restart clears it; confirm dialog before wipe). **Android `isPlaying`:** optimistic on `load`/`play` so the button doesn’t stay “Play” while audio runs. **Playback failure → Quarantine:** corrupt file leaves the index; playlist rows → To be sourced + `heldTrackKeys` (stays unsourced until user pins/downloads). |
+| Persistence | JSON under app data (`~/.local/share/slotify/` desktop; `filesDir` Android). Atomic tmp+rename. **`playback.json`** = mode + resume (index/position). **`quarantine.json`** = corrupt paths. `LocalTrack.mark` re-applied by path after rescan. |
+| Managed music dir | Desktop `~/Music/Slotify`. **Android YT writes Settings music root** (first `libraryRoots`, e.g. `/sdcard/Music`), staging `<root>/downloads`, promote to root — see YouTube row. |
+| Spotify | Embed URL import primary; **public search DDG HTML → DDG Lite → Bing** (+ bare-URL scan). Settings **no longer has** PKCE/browser-session connect UI (removed 0.1.x); private embeds still use Floorp `sp_dc` on desktop. |
 | Matcher | ISRC → 0.99; both-axes containment → ≥0.95; blend title 0.55 / artist 0.30 / duration 0.15. Duration soft (vinyl); >120s gap caps 0.80. Wrong-artist gate caps at 0.70. **Also scores filename-parsed title/artist and takes max(tag, filename)** so Android/desktop tag disagreement does not flip matches. |
 | Manual pins | `manual_links.json`: playlistId → trackKey → path. Rematch applies pins first (`isManual`, conf 1.0). `trackKey` = Spotify id → uri → `name\|artistNames`. Portable copy under Music root; paths **remapped** on load (`ManualLinks.remapMusicPaths`). |
 | YouTube | **Desktop:** system `yt-dlp` + ffmpeg (`YoutubeDlpSource`) — flags `-f "251/140/bestaudio" -x --audio-format best --embed-metadata --embed-thumbnail` (unchanged). **Android:** bundled yt-dlp via Chaquopy (`dev.ffmpegkit-maintained:yt-dlp-android:2.0.2`) + `ffmpeg-kit-audio` remux (`YoutubeSource.android.kt`). **Do not unify** — Chaquopy on phone, system binary on Linux (user, 2026-11-23). Search/download use a helper Python module (`slotify_ytdlp.py` in app filesDir) because the stock `ytdlp_runner` omits `--dump-json`/`--flat-playlist`/`full format control`. **Chaquopy edges:** never `PyObject.toJava(List)` on `sys.path`/`sys.modules`; Python `search()` returns a JSON **string** only. **Download dir = Settings music root** (`libraryRoots` first, e.g. `/sdcard/Music`), staging `<root>/downloads` (fallback `<root>` if subdir not writable); **promote completed file to the music root** — not a hardcoded `Slotify/` path (user, 2026-11-23). Write-probe before fetch. **HTTP 403:** helper retries `player_client` sets × formats; mobile UA + referer; stream copy only. **Error UI:** download failures write **only** `youtubeStatus` (red inside Find dialog) — **never** `emit()`/snackbar while that dialog is open (snackbar sits behind AlertDialog). Results re-enable after failure (busy = in-flight status only). ABIs: arm64-v8a + x86_64. Fallback search phrasings. Index **only the new file**. Auto-pin download to requesting row. |
-| Batch YouTube | Unmatched rows, best ranked score **≥ 0.85** auto-fetch; below threshold stay “To be sourced”. Status on `youtubeStatus` / `youtubeBatchRunning`. |
+| Batch YouTube | Unmatched rows; threshold = **`settings.youtubeBatchMinScore`** (default **0.85**, slider in Settings + detail). Search **fallbacks keep trying until best ≥ minScore**. Same button **stops** an in-flight batch. Status on `youtubeStatus` / `youtubeBatchRunning`. |
 | Portable transfer | Export/import `playlists.json` + `manual_links.json` to/from **Music library roots** (not `Slotify/`). Cold start: app-private playlists win; else Music-root portable file is loaded once and copied into app data. Pins merged portable → app. |
 | Android pickers | **SAF-first (2026-11-22):** Link file / JSON open with `EXTRA_INITIAL_URI` inside a **persisted Music tree** (`ACTION_OPEN_DOCUMENT_TREE` once → `takePersistableUriPermission` → `SafMusic` prefs). Document resolution: real path if `primary:`/MediaStore yields one, else **keep `content://`** (no forced copy into Slotify). `AndroidAudioPlayer` + `AndroidLibraryScanner.readTrack` accept content URIs; matcher uses `LocalTrack.nameForFilenameParse` (`displayPath` for SAF). Match still pins by `filePath` (path or content URI). **Write access (user EPERM 2026-11-23):** `READ_MEDIA_AUDIO` is not enough for `File` writes under `/sdcard/Music` (yt-dlp / promote). Manifest declares `MANAGE_EXTERNAL_STORAGE` (+ `WRITE_EXTERNAL_STORAGE` maxSdk 28). On missing grant, app opens **All files access** Settings (`requestSharedMusicWriteAccess`); download error tells the user to enable it and retry. |
 | Symlink staging | **Desktop only** (`supportsSymlinkStaging()`). Stage matched playlist files as symlinks into Slotify for phone copy (`cp -L` / rsync `-L`). UI hidden on Android. |
 | Playlist trash | Soft-delete: mark → trash → restore or empty. Empty-trash can delete audio **only** if no remaining playlist references the path (`trashOnlyAudioPaths`). |
-| Row marks | `RowMark.SKIP` / `DELETE` cycle on detail rows; survive rematch; SKIP excluded from queue; DELETE removed from playlist membership on “delete marked” (files never auto-deleted there). |
+| Row marks | Playlist + library: shared `cycleMark()` none → SKIP → DELETE → none. Playlist: survive rematch; SKIP out of queue; DELETE removed on “delete marked”. Library: `LocalTrack.mark`, re-applied by path after rescan; marked rows dimmed / excluded from queue. |
 
 ### Spotify import (important)
 
 - **Paste URL** → `parseSpotifyPlaylistId` → `SpotifyEmbedSource` fetches  
   `https://open.spotify.com/embed/playlist/{id}` → parse `__NEXT_DATA__` → `entity.trackList`.  
   Public: no login. Private: attach Floorp `sp_dc` via `readBrowserSpDcCookie()`.
-- **Public search:** Playlists tab free-text → `SpotifyPublicSearch` hits DuckDuckGo HTML (`site:open.spotify.com/playlist …`) → Import uses the same embed path. Not the Web API (free/dev tokens 403/429; embed tokens burn quota).
+- **Public search:** Playlists tab free-text → `SpotifyPublicSearch` engines in order: **DuckDuckGo HTML → DDG Lite → Bing** (`site:open.spotify.com/playlist …`), plus bare-URL fallback; per-engine status (blocked/HTTP/empty), limit ~20, scrollable results. Import still uses the embed path. Not the Web API (free/dev 403/429). **Settings connect/PKCE UI removed** — URL paste + search only for discovery.
 - **`get_access_token` is CDN-blocked** (Fastly “403 URL Blocked”). Embed `accessToken` is **not** accepted by `api.spotify.com` for free accounts (“user is not registered for this application”).
 - OAuth Web API + free account + Development-mode app → **403**  
-  `"Active premium subscription required for the owner of the app…"` — do not retry as if it were a token bug.
+  `"Active premium subscription required for the owner of the app…"` — do not retry as if it were a token bug. (PKCE path largely unplugged from UI as of 0.1.x; leftover code/tests may remain.)
 - Embed list caps ~**100** tracks; `?offset=` does not paginate.
 - Refresh **merges** playlists (`replaceExisting=false`) so URL-imported lists survive. `mergePlaylists` = incoming wins by id, keeps non-overlapping existing.
 - Redirect URI (exact): `http://127.0.0.1:43821/callback`  
@@ -130,29 +130,32 @@ User confirmed earlier (2026-10-27): desktop live (scan→match→play), playlis
 
 ---
 
-## Feature map (0.0.2 + 0.0.3 + post-0.0.3 fix)
+## Feature map (0.0.x → 0.1.2)
 
 | Area | Behavior |
 |------|----------|
-| Playlists tab | URL paste + clipboard button; public search; Refresh (OAuth merge); mark → trash; trash view + empty (optional unique-audio delete); play/stop cards; search filter on detail. |
-| Playlist detail | Single LazyColumn: To be sourced + Matched (full phone scroll). Filter field. Row marks (Skip/Del). Link file (Android: grant Music tree once, then picker opens **in** Music) / Find on YouTube / Unlink. **Hold 5s or swipe left** → prepare redo (unlink + delete managed wrong file if unreferenced) → re-fetch dialog. Batch YouTube button (≥85%). |
-| Library tab | Search title/artist; play from filtered index. |
-| Settings | Spotify (PKCE / browser cookie probe / manual sp_dc), URL import, roots + scan, Music folder export/import + desktop symlink stage, JSON pick/path import, About. Persistent **Last error**. |
-| Playback | Resume from `playback.json` (paused at saved position). Shuffle without repeats until exhausted, then reshuffle cycle. Marks SKIP/DELETE excluded from queue. Symlink targets resolved before play. |
-| Headless CLI | `./gradlew :composeApp:populatePlaylist --args="<spotify-url>"` → embed import + scan + match into app data (`PopulateCli`). |
+| Playlists tab | URL paste + clipboard; public search (DDG→Bing); Refresh (OAuth merge); mark → trash; trash always visible + empty; play/stop cards. |
+| Playlist detail | Single LazyColumn (To be sourced + Matched). Filter. Row marks. **`LinkFileDialog`** (search/re-match path). Find on YouTube / batch (tunable min score, stop button). **Hold 5s / swipe** → redo. Swipe **unsourced** row left → confirm → remove from playlist. **% badge tap = pin** (Linked chip gone). Confidence chip not a one-click play. |
+| Library tab | Search; **Find current** (player-bar title tap jumps here + scrolls to playing row); highlight/grey played; **m/s/d** mark chips; **+** add-to-playlist (create/append, pinned conf 1.0). Auto-follow: tap playing title locks, drag releases. |
+| Settings | URL import; roots + scan; **batch min-score slider**; Music export/import + desktop symlink stage; JSON pick/path; **Legal disclaimer**; About. **No** Spotify connection / browser-session probe / PKCE await. Persistent **Last error**. |
+| Playback | Four modes + played set (in-memory) + artist blocks; resume from `playback.json`; row tap starts **that** row (saved resume is header-only). Marks skip/delete out of queue. Corrupt file → quarantine + To be sourced + hold. |
+| Cover art | `CoverBackdrop` behind list regions only (headers plain). Embedded art only (opus parser / jaudiotagger / MediaMetadataRetriever); **never** fetch/generate a substitute. 6-entry LRU. Android `content://` supported. |
+| Rename / heal | One-at-a-time editable rename walk (primary artist conservative); live pins kept; healed rows rematch immediately; broken paths → unsourced + held. |
+| Headless CLI | `./gradlew :composeApp:populatePlaylist --args="<spotify-url>"` → embed import + scan + match. |
+
+Design docs: `specs/2026-11-23-*.md`, `plans/…`, `reports/artist-shuffle.md`, `reports/cover-art-backdrop.md`.
 
 ---
 
 ## Open work
 
-- **T2 content-fingerprint reconnect**: size + head/tail hash per match; scan re-binds by fingerprint first; play-failure self-heal. (Designed, not built.)
-- Android: **token storage still in-memory** (`JsonFileTokenStorage.android` → `InMemoryTokenStorage`, TODO T1.6 SharedPreferences); PKCE loopback **not** ported (`pkceAwait` throws — cookie / URL paste only); launcher icon now real (from `graphics/slotify.png`).
-- Android YouTube **coded, not device-tested** here — smoke-test search + one opus download into `/sdcard/Music/Slotify/downloads/`. Debug APK ~**66MB** (Python + ffmpeg); release should use ABI splits/AAB. Free `yt-dlp-android` has no curl-cffi (YouTube usually OK).
-- Android **SAF Link file** (Music tree grant + `content://` playback) **coded, not device-tested** — confirm picker shows Music and a linked track plays after app restart (persisted URI permission).
-- **Already-downloaded** YouTube files (pre-Spotify-naming fix) may still have YouTube titles/tags — re-fetch or re-link those rows to retag.
-- PKCE refresh path untested live (`spotify_auth.json` lacks `clientType`).
+- **T2 content-fingerprint reconnect**: size + head/tail hash per match; scan re-binds by fingerprint first; play-failure self-heal beyond quarantine. (Designed, not built.)
+- Android: **token storage still in-memory** if any PKCE path is revived; launcher icon from `graphics/slotify.png`.
+- Android YouTube / SAF Link / phone transfer / batch — **device-proven only if the user says so**; still treat as smoke-test territory. Debug APK ~**66MB**; release → ABI splits/AAB. Free `yt-dlp-android` has no curl-cffi.
+- **Already-downloaded** YouTube files (pre-Spotify-naming) may still have wrong titles/tags — re-fetch or re-link.
+- Played set is **in-memory only** (spec: restart clears) — if user wants persistence, that’s a product change.
 - Listen-to-confirm UX for fuzzy matches; multi-format play preference (flac→opus→…).
-- User live-testing of Link file, YouTube multi-match, batch fetch, phone transfer — confirm before marking done.
+- `VERSION` still `0.0.3` while branch is `0.1.2` — bump only when cutting a release label.
 
 ---
 
@@ -183,7 +186,7 @@ SLOTIFY_DEMO=1 ./run.sh           # demo fixtures
 
 - Original authoring host: Manjaro x86_64, KDE Wayland; Floorp; ffmpeg n9.0.1; yt-dlp 2026.08.19; VLC 3.0.23.
 - Previous host (CachyOS): yt-dlp 2026.08.19, ffmpeg n9.0.2, libvlc 3.0.23 + `vlc-plugins-base`. JDK 21 at `~/tools/jdk-21.0.13+9` (see `env.sh`); Android SDK at `~/tools/android-sdk` with `platforms;android-37.0` + `build-tools;35.0.0`.
-- This host (2026-11-22 re-measure): JDK **21.0.13.1+2** at `~/tools/jdk-21.0.13.1+2` (`env.sh` updated); Android SDK `~/tools/android-sdk` with `platforms;android-37.0`, `build-tools;35.0.0` + `36.0.0`. Desktop tests + `assembleDebug` green after pull `5d08e0b`. APK ~66MB (yt-dlp/ffmpeg natives).
+- This host (last re-measure in-tree): JDK path in `env.sh` (`JAVA_HOME` — confirm it exists here); Android SDK `~/tools/android-sdk` with `platforms;android-37.0`. Branch **`0.1.2`** after `git pull`. APK ~66MB (yt-dlp/ffmpeg natives).
 - Library: `/home/owner/Music` (~98 files post-whitelist on original host; 40 `.m4a` excluded by design). Android default root `/sdcard/Music` (single path — do not also add `/storage/emulated/0/Music` or files double-count before canonicalization).
 
 Do **not** commit: `spotify-app.txt`, `~/.local/share/slotify/*` / Android `filesDir` JSON, cookies, Client IDs in notes if avoidable (Client ID in Settings is public-ish for PKCE but still machine state).
