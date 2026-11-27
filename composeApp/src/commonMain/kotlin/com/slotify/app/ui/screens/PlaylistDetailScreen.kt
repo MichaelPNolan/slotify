@@ -50,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.slotify.app.loudness.supportsLoudnessBalance
 import com.slotify.app.match.Matcher
 import com.slotify.app.model.RemoteTrack
 import com.slotify.app.model.ResolvedPlaylistTrack
@@ -71,6 +72,7 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
     val batchRunning by state.youtubeBatchRunning.collectAsState()
     val linkFillStatus by state.linkFillStatus.collectAsState()
     val linkFillRunning by state.linkFillRunning.collectAsState()
+    val loudnessStatus by state.loudnessStatus.collectAsState()
     var findTarget by remember { mutableStateOf<RemoteTrack?>(null) }
     var linkTarget by remember { mutableStateOf<RemoteTrack?>(null) }
     var filter by rememberSaveable(playlistId) { mutableStateOf("") }
@@ -189,6 +191,33 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
             }
         }
 
+        // Loudness backfill (Android API 28+) — same status line style as YT batch.
+        if (supportsLoudnessBalance()) {
+            val loudnessActive = loudnessStatus != null &&
+                !loudnessStatus!!.startsWith("Loudness done") &&
+                !loudnessStatus!!.startsWith("Loudness cancelled") &&
+                !loudnessStatus!!.startsWith("Loudness failed") &&
+                !loudnessStatus!!.startsWith("All tracks")
+            Spacer(Modifier.size(4.dp))
+            OutlinedButton(
+                onClick = {
+                    if (loudnessActive) state.cancelLoudnessBackfill()
+                    else state.startLoudnessBackfill(playlist.id)
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+            ) {
+                Icon(
+                    if (loudnessActive) Icons.Default.Stop else Icons.Default.Download,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(if (loudnessActive) "Stop analysis" else "Analyse loudness")
+            }
+        }
+
         // Batch: auto-fetch unmatched rows whose best YouTube hit scores ≥ settings min.
         // While running the same button stops the batch.
         if ((playlist.toBeSourced.isNotEmpty() || batchRunning) && state.youtube.isSupported) {
@@ -252,6 +281,25 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
                 if (linkFillRunning) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+            }
+            loudnessStatus?.let { s ->
+                val active = !s.startsWith("Loudness done") &&
+                    !s.startsWith("Loudness cancelled") &&
+                    !s.startsWith("Loudness failed") &&
+                    !s.startsWith("All tracks")
+                Text(
+                    text = s,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = when {
+                        s.startsWith("Loudness failed") -> MaterialTheme.colorScheme.error
+                        active -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+                if (active) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
             }
