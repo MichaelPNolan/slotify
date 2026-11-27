@@ -322,6 +322,10 @@ class AppState(
     /** App output volume 0..1 — exposed for the always-visible volume control. */
     val volume: StateFlow<Float> = _volume.asStateFlow()
 
+    private val _loudnessBar = MutableStateFlow(LoudnessBar())
+    /** Remedy applied to the current track — Neutral / Boost / Limiting (volume bar). */
+    val loudnessBar: StateFlow<LoudnessBar> = _loudnessBar.asStateFlow()
+
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val messages: SharedFlow<String> = _messages.asSharedFlow()
 
@@ -3114,22 +3118,31 @@ class AppState(
 
     /**
      * S6: balance toward playlist mean when enabled.
-     * Recommended → boost-only clamp; Bypass → 0; Custom → user dB.
-     * Limiter on whenever balance is on and analysis exists.
+     * Recommended → boost-only clamp; Bypass → no correction; Custom → user dB.
+     * Limiter only when the track sits above the playlist mean (loud side).
+     * Updates [loudnessBar] for the volume-row status.
      */
     private fun applyLoudnessToPlayer(path: String) {
-        if (!supportsLoudnessBalance()) {
+        fun neutral() {
             player.setLoudnessCorrection(0f, enableLimiter = false)
+            _loudnessBar.value = LoudnessBar()
+        }
+        if (!supportsLoudnessBalance()) {
+            neutral()
             return
         }
         val s = _settings.value
         if (!s.loudnessBalance) {
-            player.setLoudnessCorrection(0f, enableLimiter = false)
+            neutral()
             return
         }
         val track = loudnessStore.track(path)
         if (track == null) {
-            player.setLoudnessCorrection(0f, enableLimiter = false)
+            neutral()
+            return
+        }
+        if (track.correction == CorrectionMode.BYPASS) {
+            neutral()
             return
         }
         val mean = _activePlaylistId.value?.let { playlistMeanLufs(it) }
@@ -3143,7 +3156,11 @@ class AppState(
             CorrectionMode.BYPASS -> 0f
             CorrectionMode.CUSTOM -> track.customGainDb.toFloat()
         }
-        player.setLoudnessCorrection(boost, enableLimiter = true)
+        // Loud side: integrated above the playlist mean → arm the limiter (no cut).
+        val loud = mean != null && track.integratedLufs > mean
+        val limiting = loud
+        player.setLoudnessCorrection(boost, enableLimiter = limiting)
+        _loudnessBar.value = LoudnessBar(boostDb = boost, limiting = limiting)
     }
 
     /**

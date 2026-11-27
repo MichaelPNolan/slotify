@@ -25,11 +25,13 @@ import com.slotify.app.state.AppState
  * Always-visible volume control, shown on every tab (bottom bar, above the
  * navigation row) — including when nothing is playing.
  * Icon click toggles mute; the slider sets app output volume live and
- * persists when the drag finishes.
+ * persists when the drag finishes. Right of the (half-width) slider: the
+ * loudness-balance remedy currently applied — Neutral / Boost / Limiting.
  */
 @Composable
 fun VolumeControl(state: AppState) {
     val volume by state.volume.collectAsState()
+    val loudness by state.loudnessBar.collectAsState()
 
     Row(
         modifier = Modifier
@@ -51,6 +53,7 @@ fun VolumeControl(state: AppState) {
             )
         }
         Spacer(Modifier.width(4.dp))
+        // Half of the remaining row; status text takes the other half.
         Slider(
             value = volume,
             onValueChange = { state.setVolume(it, persist = false) },
@@ -62,6 +65,19 @@ fun VolumeControl(state: AppState) {
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(40.dp),
+        )
+        Text(
+            text = loudness.label,
+            style = MaterialTheme.typography.labelMedium,
+            color = when {
+                loudness.boostDb > 0.05f -> MaterialTheme.colorScheme.tertiary
+                loudness.limiting -> MaterialTheme.colorScheme.secondary
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 4.dp),
+            maxLines = 1,
         )
     }
 }
