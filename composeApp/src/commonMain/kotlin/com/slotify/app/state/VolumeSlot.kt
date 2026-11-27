@@ -3,13 +3,13 @@ package com.slotify.app.state
 /**
  * True when the volume row’s right-hand slot should be the
  * “Analyse loudness” button instead of Neutral/Boost/Limiting text.
- * Button only when nothing is playing and the active playlist still has
- * unanalysed tracks (Android API 28+ with balance support).
+ *
+ * Playing → remedy text; paused / not playing → the button (when balance is
+ * supported and there is an active playlist to analyse).
  */
 fun showLoudnessAnalyseButton(
     isPlaying: Boolean,
     hasActivePlaylist: Boolean,
-    playlistIncomplete: Boolean,
     loudnessSupported: Boolean,
 ): Boolean =
-    loudnessSupported && hasActivePlaylist && playlistIncomplete && !isPlaying
+    loudnessSupported && hasActivePlaylist && !isPlaying

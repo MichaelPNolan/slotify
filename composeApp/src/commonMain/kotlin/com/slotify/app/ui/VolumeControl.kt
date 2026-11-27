@@ -17,7 +17,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -30,8 +29,8 @@ import com.slotify.app.state.showLoudnessAnalyseButton
  * navigation row) — including when nothing is playing.
  * Icon click toggles mute; the slider sets app output volume live and
  * persists when the drag finishes. Right of the (half-width) slider:
- * - Song playing → loudness remedy (Neutral / Boost / Limiting).
- * - Idle + active playlist incomplete → “Analyse loudness” (or Stop).
+ * - Song **playing** → loudness remedy (Neutral / Boost / Limiting).
+ * - **Paused / not playing** → “Analyse loudness” (or Stop while running).
  */
 @Composable
 fun VolumeControl(state: AppState) {
@@ -40,21 +39,15 @@ fun VolumeControl(state: AppState) {
     val playerSnap by state.player.snapshot.collectAsState()
     val activePlaylistId by state.activePlaylistId.collectAsState()
     val loudnessStatus by state.loudnessStatus.collectAsState()
-    val loudnessRevision by state.loudnessStore.revision.collectAsState()
-    val playlists by state.playlists.collectAsState()
 
     val analysisRunning = loudnessStatus != null &&
         !loudnessStatus!!.startsWith("Loudness done") &&
         !loudnessStatus!!.startsWith("Loudness cancelled") &&
         !loudnessStatus!!.startsWith("Loudness failed") &&
         !loudnessStatus!!.startsWith("All tracks")
-    val needsAnalysis = remember(activePlaylistId, loudnessRevision, playlists) {
-        state.playlistNeedsLoudnessAnalysis(activePlaylistId)
-    }
     val showAnalyse = showLoudnessAnalyseButton(
         isPlaying = playerSnap.isPlaying,
         hasActivePlaylist = activePlaylistId != null,
-        playlistIncomplete = needsAnalysis,
         loudnessSupported = supportsLoudnessBalance(),
     )
 

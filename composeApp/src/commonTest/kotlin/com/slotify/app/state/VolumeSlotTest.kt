@@ -7,12 +7,11 @@ import kotlin.test.assertTrue
 class VolumeSlotTest {
 
     @Test
-    fun buttonWhenIdleAndIncomplete() {
+    fun buttonWhenPausedWithActivePlaylist() {
         assertTrue(
             showLoudnessAnalyseButton(
                 isPlaying = false,
                 hasActivePlaylist = true,
-                playlistIncomplete = true,
                 loudnessSupported = true,
             ),
         )
@@ -24,36 +23,25 @@ class VolumeSlotTest {
             showLoudnessAnalyseButton(
                 isPlaying = true,
                 hasActivePlaylist = true,
-                playlistIncomplete = true,
                 loudnessSupported = true,
             ),
         )
     }
 
     @Test
-    fun noButtonWhenCompleteOrUnsupportedOrNoPlaylist() {
-        assertFalse(
-            showLoudnessAnalyseButton(
-                isPlaying = false,
-                hasActivePlaylist = true,
-                playlistIncomplete = false,
-                loudnessSupported = true,
-            ),
-        )
-        assertFalse(
-            showLoudnessAnalyseButton(
-                isPlaying = false,
-                hasActivePlaylist = true,
-                playlistIncomplete = true,
-                loudnessSupported = false,
-            ),
-        )
+    fun noButtonWithoutPlaylistOrSupport() {
         assertFalse(
             showLoudnessAnalyseButton(
                 isPlaying = false,
                 hasActivePlaylist = false,
-                playlistIncomplete = true,
                 loudnessSupported = true,
+            ),
+        )
+        assertFalse(
+            showLoudnessAnalyseButton(
+                isPlaying = false,
+                hasActivePlaylist = true,
+                loudnessSupported = false,
             ),
         )
     }
