@@ -1,5 +1,6 @@
 package com.slotify.app.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,6 +33,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -50,6 +53,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.slotify.app.loudness.CorrectionMode
+import com.slotify.app.loudness.TrackLoudness
+import com.slotify.app.loudness.recommendedBoostDb
 import com.slotify.app.loudness.supportsLoudnessBalance
 import com.slotify.app.match.Matcher
 import com.slotify.app.model.RemoteTrack
@@ -606,6 +612,24 @@ private fun MatchedRow(
     // Also true when a Slotify symlink resolves back to a library file.
     val isExistingLibrary = !underSlotify && relPath != null
 
+    val loudness = if (settings.showLoudnessChips && supportsLoudnessBalance()) {
+        state.loudnessStore.track(localPath)
+    } else {
+        null
+    }
+    var showLoudnessSheet by remember { mutableStateOf(false) }
+    if (showLoudnessSheet && loudness != null) {
+        LoudnessDetailDialog(
+            track = loudness,
+            meanLufs = state.playlistMeanLufs(playlistId),
+            maxBoostDb = settings.loudnessMaxBoostDb,
+            onDismiss = { showLoudnessSheet = false },
+            onMode = { mode, gain ->
+                state.loudnessStore.setCorrection(localPath, mode, gain)
+            },
+        )
+    }
+
     var dragOffsetX by remember { mutableFloatStateOf(0f) }
     var redoFired by remember { mutableStateOf(false) }
 
@@ -707,18 +731,40 @@ private fun MatchedRow(
                 modifier = Modifier.width(28.dp),
             )
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = row.remote.name,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = if (dimmed) {
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = row.remote.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = if (dimmed) {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (loudness != null) {
+                        Text(
+                            text = loudness.chip0_99.toString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (loudness.chip0_99 < 40) {
+                                MaterialTheme.colorScheme.tertiary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier
+                                .padding(start = 6.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.surfaceVariant,
+                                    MaterialTheme.shapes.small,
+                                )
+                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                .clickable { showLoudnessSheet = true },
+                        )
+                    }
+                }
                 Text(
                     text = buildString {
                         append(row.remote.artistNames.ifBlank { "Unknown artist" })
@@ -790,4 +836,70 @@ private fun MatchedRow(
             )
         }
     }
+}
+
+@Composable
+private fun LoudnessDetailDialog(
+    track: TrackLoudness,
+    meanLufs: Double?,
+    maxBoostDb: Float,
+    onDismiss: () -> Unit,
+    onMode: (CorrectionMode, Double) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Loudness") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Chip ${track.chip0_99}/99 · " +
+                        "${"%.1f".format(track.integratedLufs)} LUFS",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    text = "LRA ${"%.1f".format(track.loudnessRange)} LU · " +
+                        "peak ${"%.1f".format(track.truePeakDbtp)} dBTP",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val rec = recommendedBoostDb(
+                    track.integratedLufs,
+                    meanLufs,
+                    maxBoostDb.toDouble(),
+                )
+                Text(
+                    text = "Recommended boost: ${"%+.1f".format(rec)} dB",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                CorrectionMode.entries.forEach { mode ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = track.correction == mode,
+                            onClick = { onMode(mode, track.customGainDb) },
+                        )
+                        Text(modeLabel(mode))
+                    }
+                }
+                if (track.correction == CorrectionMode.CUSTOM) {
+                    Text(
+                        text = "Custom gain: ${"%+.1f".format(track.customGainDb)} dB",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Slider(
+                        value = track.customGainDb.toFloat(),
+                        onValueChange = { v -> onMode(CorrectionMode.CUSTOM, v.toDouble()) },
+                        valueRange = -12f..24f,
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+private fun modeLabel(mode: CorrectionMode): String = when (mode) {
+    CorrectionMode.RECOMMENDED -> "Recommended"
+    CorrectionMode.BYPASS -> "Bypass"
+    CorrectionMode.CUSTOM -> "Custom"
 }

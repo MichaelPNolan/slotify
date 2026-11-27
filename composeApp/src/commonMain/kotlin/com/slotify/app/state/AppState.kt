@@ -18,8 +18,10 @@ import com.slotify.app.library.proposeSongFileName
 import com.slotify.app.library.LibraryScanner
 import com.slotify.app.library.createLibraryScanner
 import com.slotify.app.library.writeAudioMetadata
+import com.slotify.app.loudness.CorrectionMode
 import com.slotify.app.loudness.analyseFileLoudness
 import com.slotify.app.loudness.appLoudnessStore
+import com.slotify.app.loudness.recommendedBoostDb
 import com.slotify.app.loudness.supportsLoudnessBalance
 import com.slotify.app.match.Matcher
 import com.slotify.app.model.AppPlaylist
@@ -3077,6 +3079,7 @@ class AppState(
         markPlayed(entry)
         _nowPlaying.value = NowPlaying(entry.title, entry.artist, entry.path)
         player.load(entry.path, startPaused = seekToMs > 0)
+        applyLoudnessToPlayer(entry.path)
         if (seekToMs > 0) {
             scope.launch {
                 repeat(40) {
@@ -3096,6 +3099,40 @@ class AppState(
     }
 
     // ── Volume ───────────────────────────────────────────────────────
+
+    /**
+     * S6: balance toward playlist mean when enabled.
+     * Recommended → boost-only clamp; Bypass → 0; Custom → user dB.
+     * Limiter on whenever balance is on and analysis exists.
+     */
+    private fun applyLoudnessToPlayer(path: String) {
+        if (!supportsLoudnessBalance()) {
+            player.setLoudnessCorrection(0f, enableLimiter = false)
+            return
+        }
+        val s = _settings.value
+        if (!s.loudnessBalance) {
+            player.setLoudnessCorrection(0f, enableLimiter = false)
+            return
+        }
+        val track = loudnessStore.track(path)
+        if (track == null) {
+            player.setLoudnessCorrection(0f, enableLimiter = false)
+            return
+        }
+        val mean = _activePlaylistId.value?.let { playlistMeanLufs(it) }
+        val boost = when (track.correction) {
+            CorrectionMode.RECOMMENDED ->
+                recommendedBoostDb(
+                    track.integratedLufs,
+                    mean,
+                    s.loudnessMaxBoostDb.toDouble(),
+                ).toFloat()
+            CorrectionMode.BYPASS -> 0f
+            CorrectionMode.CUSTOM -> track.customGainDb.toFloat()
+        }
+        player.setLoudnessCorrection(boost, enableLimiter = true)
+    }
 
     /**
      * Update app volume 0..1. Set [persist] only when a gesture finishes
