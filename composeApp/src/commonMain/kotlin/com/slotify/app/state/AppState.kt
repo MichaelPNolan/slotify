@@ -3297,7 +3297,12 @@ class AppState(
     }
 
     fun cancelLoudnessBackfill() {
-        loudnessJob?.cancel()
+        val job = loudnessJob ?: return
+        if (!job.isActive) return
+        // Current file may still be decoding — surface that we’re winding down
+        // instead of leaving “Analysing…” until the next ensureActive().
+        _loudnessStatus.value = "Stopping analysis…"
+        job.cancel()
     }
 
     fun playlistMeanLufs(playlistId: String): Double? =

@@ -50,6 +50,7 @@ fun VolumeControl(state: AppState) {
         !loudnessStatus!!.startsWith("Loudness cancelled") &&
         !loudnessStatus!!.startsWith("Loudness failed") &&
         !loudnessStatus!!.startsWith("All tracks")
+    val stopping = loudnessStatus?.startsWith("Stopping analysis") == true
     val showAnalyse = showLoudnessAnalyseButton(
         isPlaying = playerSnap.isPlaying,
         hasActivePlaylist = activePlaylistId != null,
@@ -91,14 +92,20 @@ fun VolumeControl(state: AppState) {
         if (showAnalyse) {
             TextButton(
                 onClick = {
+                    if (stopping) return@TextButton
                     val id = activePlaylistId ?: return@TextButton
                     if (analysisRunning) state.cancelLoudnessBackfill()
                     else state.startLoudnessBackfill(id)
                 },
+                enabled = !stopping,
                 modifier = Modifier.weight(1f),
             ) {
                 Text(
-                    text = if (analysisRunning) "Stop analysis" else "Analyse loudness",
+                    text = when {
+                        stopping -> "Stopping soon"
+                        analysisRunning -> "Stop analysis"
+                        else -> "Analyse loudness"
+                    },
                     style = MaterialTheme.typography.labelMedium,
                     maxLines = 1,
                 )

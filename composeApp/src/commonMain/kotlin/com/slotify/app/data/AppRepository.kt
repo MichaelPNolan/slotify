@@ -31,8 +31,8 @@ data class AppSettings(
     val loudnessBalance: Boolean = false,
     /** Cap for Recommended boost, dB. */
     val loudnessMaxBoostDb: Float = 12f,
-    /** Advanced: show 0–99 loudness chips on playlist rows. */
-    val showLoudnessChips: Boolean = false,
+    /** Show 0–99 loudness chips on playlist rows once a track is analysed. */
+    val showLoudnessChips: Boolean = true,
 )
 
 /** Resume point for one playlist (survives app restart). */
