@@ -3234,6 +3234,17 @@ class AppState(
     fun playlistMeanLufs(playlistId: String): Double? =
         loudnessStore.playlist(playlistId)?.meanLufs
 
+    /** True when [playlistId] still has playable rows without a stored analysis. */
+    fun playlistNeedsLoudnessAnalysis(playlistId: String?): Boolean {
+        if (playlistId == null || !supportsLoudnessBalance()) return false
+        val playlist = _playlists.value.find { it.id == playlistId } ?: return false
+        val paths = playlist.resolvedTracks
+            .mapNotNull { it.match?.local?.filePath }
+            .distinct()
+        if (paths.isEmpty()) return false
+        return paths.any { loudnessStore.track(it) == null }
+    }
+
     private fun recomputePlaylistProfile(playlistId: String) {
         val playlist = _playlists.value.find { it.id == playlistId } ?: return
         val paths = playlist.resolvedTracks
