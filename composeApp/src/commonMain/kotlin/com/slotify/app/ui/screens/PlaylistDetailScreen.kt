@@ -201,6 +201,27 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
 
         // Loudness progress line only — the Analyse/Stop control lives in the
         // volume row (right of the slider) when the player is paused.
+        // Must sit OUTSIDE the YouTube batch block or it vanishes when the
+        // playlist has nothing to source (user still runs Analyse from volume).
+        loudnessStatus?.let { s ->
+            val active = !s.startsWith("Loudness done") &&
+                !s.startsWith("Loudness cancelled") &&
+                !s.startsWith("Loudness failed") &&
+                !s.startsWith("All tracks")
+            Text(
+                text = s,
+                style = MaterialTheme.typography.bodySmall,
+                color = when {
+                    s.startsWith("Loudness failed") -> MaterialTheme.colorScheme.error
+                    active -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+            if (active) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        }
 
         // Batch: auto-fetch unmatched rows whose best YouTube hit scores ≥ settings min.
         // While running the same button stops the batch.
@@ -265,25 +286,6 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
                 if (linkFillRunning) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
-            }
-            loudnessStatus?.let { s ->
-                val active = !s.startsWith("Loudness done") &&
-                    !s.startsWith("Loudness cancelled") &&
-                    !s.startsWith("Loudness failed") &&
-                    !s.startsWith("All tracks")
-                Text(
-                    text = s,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = when {
-                        s.startsWith("Loudness failed") -> MaterialTheme.colorScheme.error
-                        active -> MaterialTheme.colorScheme.primary
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                )
-                if (active) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
             }
