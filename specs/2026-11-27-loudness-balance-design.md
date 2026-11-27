@@ -1,5 +1,10 @@
 # Loudness Balance (EBU R128 + DynamicsProcessing) — Design
 
+> [!NOTE]
+> This document may not reflect the current implementation.
+> See the final report for up-to-date state:
+> [Final Report](../reports/loudness-balance.md)
+
 Date: 2026-11-27 · Branch: `0.1.5` · Status: approved
 
 ## [S1] Problem
