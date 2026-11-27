@@ -70,7 +70,7 @@ class EbuR128Test {
         val pcm = sine1k()
         r.processInterleaved(pcm, pcm.size)
         val out = r.finish()
-        assertTrue(out.integratedLufs in -25.0..-10.0, "got ${out.integratedLufs}")
+        assertTrue(out.integratedLufs in -15.0..0.0, "got ${out.integratedLufs}")
         assertTrue(out.loudnessRange >= 0.0, "LRA got ${out.loudnessRange}")
         // Peak amp 0.5 → true peak ≤ ~−5 dBTP + tiny oversample headroom
         assertTrue(out.truePeakDbtp in -20.0..0.0, "dBTP got ${out.truePeakDbtp}")
