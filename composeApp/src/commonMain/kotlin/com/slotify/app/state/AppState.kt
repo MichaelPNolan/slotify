@@ -3173,9 +3173,9 @@ class AppState(
      * Updates [loudnessBar] for the volume-row status.
      */
     private fun applyLoudnessToPlayer(path: String) {
-        fun neutral() {
+        fun neutral(balanceOff: Boolean = false) {
             player.setLoudnessCorrection(0f, enableLimiter = false)
-            _loudnessBar.value = LoudnessBar()
+            _loudnessBar.value = LoudnessBar(balanceOff = balanceOff)
         }
         if (!supportsLoudnessBalance()) {
             neutral()
@@ -3183,7 +3183,8 @@ class AppState(
         }
         val s = _settings.value
         if (!s.loudnessBalance) {
-            neutral()
+            // Still playing a song — make it obvious why Custom did nothing.
+            neutral(balanceOff = true)
             return
         }
         val track = loudnessStore.track(path)

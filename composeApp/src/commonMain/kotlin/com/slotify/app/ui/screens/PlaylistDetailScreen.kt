@@ -644,11 +644,16 @@ private fun MatchedRow(
                     gain,
                     customLimitThresholdDb = limitThreshold,
                 )
-                // Immediate live apply for the track under the cursor (not only
-                // the next playAt) — slider feedback while this song is loaded.
-                if (nowPlaying?.path == localPath ||
-                    com.slotify.app.data.resolveSymlinkTarget(nowPlaying?.path ?: "") ==
-                    localPath
+                // Custom implies balance must be on or applyLoudnessToPlayer
+                // always neutralises (loudnessBalance defaults false).
+                if (mode == CorrectionMode.CUSTOM && !settings.loudnessBalance) {
+                    state.updateSettings { it.copy(loudnessBalance = true) }
+                }
+                // Live-apply only when this row is the loaded track.
+                val np = nowPlaying?.path
+                if (np != null &&
+                    com.slotify.app.loudness.loudnessKey(np) ==
+                    com.slotify.app.loudness.loudnessKey(localPath)
                 ) {
                     state.refreshLoudnessForCurrentTrack()
                 }

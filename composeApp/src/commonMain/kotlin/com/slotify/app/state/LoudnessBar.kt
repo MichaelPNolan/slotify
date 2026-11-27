@@ -3,15 +3,22 @@ package com.slotify.app.state
 /**
  * What the loudness-balance path is doing to the current track’s audio —
  * shown beside the volume slider.
+ *
+ * [balanceOff] — Settings → Loudness balance is disabled (nothing is applied).
+ * [boostDb] may be negative (Custom cut); positive is makeup boost.
  */
 data class LoudnessBar(
     val boostDb: Float = 0f,
     val limiting: Boolean = false,
+    val balanceOff: Boolean = false,
 ) {
     val label: String
         get() = when {
+            balanceOff -> "Balance off"
             boostDb > 0.05f && limiting -> "Boost +${fmt(boostDb)} · Limiting"
             boostDb > 0.05f -> "Boost +${fmt(boostDb)} dB"
+            boostDb < -0.05f && limiting -> "Cut −${fmt(-boostDb)} · Limiting"
+            boostDb < -0.05f -> "Cut −${fmt(-boostDb)} dB"
             limiting -> "Limiting"
             else -> "Neutral"
         }

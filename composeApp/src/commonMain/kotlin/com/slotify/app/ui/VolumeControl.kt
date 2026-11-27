@@ -121,7 +121,9 @@ fun VolumeControl(state: AppState) {
             }
         } else {
             val labelColor = when {
+                loudness.balanceOff -> MaterialTheme.colorScheme.error
                 loudness.boostDb > 0.05f -> MaterialTheme.colorScheme.tertiary
+                loudness.boostDb < -0.05f -> MaterialTheme.colorScheme.secondary
                 loudness.limiting -> MaterialTheme.colorScheme.secondary
                 else -> MaterialTheme.colorScheme.onSurfaceVariant
             }

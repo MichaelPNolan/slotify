@@ -29,4 +29,22 @@ class LoudnessBarTest {
             LoudnessBar(boostDb = 2f, limiting = true).label,
         )
     }
+
+    @Test
+    fun balanceOffIsExplicit() {
+        assertEquals("Balance off", LoudnessBar(balanceOff = true).label)
+        assertEquals(
+            "Balance off",
+            LoudnessBar(boostDb = 3f, limiting = true, balanceOff = true).label,
+        )
+    }
+
+    @Test
+    fun customCutShowsCutNotNeutral() {
+        assertEquals("Cut −3.5 dB", LoudnessBar(boostDb = -3.5f).label)
+        assertEquals(
+            "Cut −6.0 · Limiting",
+            LoudnessBar(boostDb = -6f, limiting = true).label,
+        )
+    }
 }

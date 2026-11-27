@@ -231,6 +231,8 @@ fun SettingsScreen(state: AppState) {
                             checked = settings.loudnessBalance,
                             onCheckedChange = { on ->
                                 state.updateSettings { s -> s.copy(loudnessBalance = on) }
+                                // Re-push correction for the loaded track immediately.
+                                state.refreshLoudnessForCurrentTrack()
                             },
                         )
                     }
