@@ -169,15 +169,17 @@ class AndroidAudioPlayer : AudioPlayer {
             )
             dpp.setInputGainAllChannelsTo(pendingBoostDb.coerceIn(-24f, 24f))
             if (pendingLimiter) {
+                // Gentle loudness control: −3 dB post trim, 1.5:1 over threshold
+                // (user: “3 dB of reduction … compression ratio of 1.5:1”).
                 val limiter = DynamicsProcessing.Limiter(
-                    true,   // enabled
-                    true,   // in use
-                    0,      // link group
-                    -1.5f,  // threshold dB
-                    5f,     // attack ms
-                    50f,    // release ms
-                    20f,    // ratio
-                    0f,     // post gain
+                    true,    // enabled
+                    true,    // in use
+                    0,       // link group
+                    0f,      // threshold dB — engage near full scale
+                    5f,      // attack ms
+                    50f,     // release ms
+                    1.5f,    // ratio 1.5:1
+                    -3f,     // post gain — 3 dB reduction (parameter exists)
                 )
                 dpp.setLimiterAllChannelsTo(limiter)
             }
