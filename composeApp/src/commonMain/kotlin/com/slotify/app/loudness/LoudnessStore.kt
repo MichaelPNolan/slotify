@@ -29,6 +29,11 @@ data class TrackLoudness(
     val chip0_99: Int,
     val correction: CorrectionMode = CorrectionMode.RECOMMENDED,
     val customGainDb: Double = 0.0,
+    /**
+     * Custom mode only: limiter threshold in dBFS (0 = full scale).
+     * Negative = start cutting earlier, below max volume (e.g. −6 dB).
+     */
+    val customLimitThresholdDb: Double = 0.0,
     val analysedAt: Long = 0L,
 )
 
@@ -92,13 +97,19 @@ class LoudnessStore(
         bumpRevision()
     }
 
-    fun setCorrection(path: String, mode: CorrectionMode, customGainDb: Double) {
+    fun setCorrection(
+        path: String,
+        mode: CorrectionMode,
+        customGainDb: Double,
+        customLimitThresholdDb: Double = 0.0,
+    ) {
         val d = load()
         val key = loudnessKey(path)
         val cur = d.tracks[key] ?: return
         doc = d.copy(tracks = d.tracks + (key to cur.copy(
             correction = mode,
             customGainDb = customGainDb,
+            customLimitThresholdDb = customLimitThresholdDb.coerceIn(-24.0, 0.0),
         )))
         persist()
         bumpRevision()

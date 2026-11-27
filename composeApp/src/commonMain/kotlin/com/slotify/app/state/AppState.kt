@@ -3199,9 +3199,22 @@ class AppState(
             CorrectionMode.CUSTOM -> track.customGainDb.toFloat()
         }
         // Loud side: integrated above the playlist mean → arm the limiter (no cut).
+        // Custom always arms it so the user’s threshold (below full scale) applies.
         val loud = mean != null && track.integratedLufs > mean
-        val limiting = loud
-        player.setLoudnessCorrection(boost, enableLimiter = limiting)
+        val limiting = when (track.correction) {
+            CorrectionMode.CUSTOM -> true
+            CorrectionMode.BYPASS -> false
+            CorrectionMode.RECOMMENDED -> loud
+        }
+        val threshold = when (track.correction) {
+            CorrectionMode.CUSTOM -> track.customLimitThresholdDb.toFloat()
+            else -> 0f
+        }
+        player.setLoudnessCorrection(
+            boost,
+            enableLimiter = limiting,
+            limiterThresholdDb = threshold,
+        )
         _loudnessBar.value = LoudnessBar(boostDb = boost, limiting = limiting)
     }
 

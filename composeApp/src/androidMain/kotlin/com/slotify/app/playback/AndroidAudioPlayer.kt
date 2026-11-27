@@ -30,6 +30,7 @@ class AndroidAudioPlayer : AudioPlayer {
     private var pendingPlay = true
     private var pendingBoostDb = 0f
     private var pendingLimiter = false
+    private var pendingLimiterThresholdDb = 0f
     private var dynamics: DynamicsProcessing? = null
 
     private val _snapshot = MutableStateFlow(PlayerSnapshot())
@@ -134,9 +135,14 @@ class AndroidAudioPlayer : AudioPlayer {
         runCatching { player.setVolume(v, v) }
     }
 
-    override fun setLoudnessCorrection(boostDb: Float, enableLimiter: Boolean) {
+    override fun setLoudnessCorrection(
+        boostDb: Float,
+        enableLimiter: Boolean,
+        limiterThresholdDb: Float,
+    ) {
         pendingBoostDb = boostDb
         pendingLimiter = enableLimiter
+        pendingLimiterThresholdDb = limiterThresholdDb.coerceIn(-24f, 0f)
         if (player.audioSessionId > 0) applyDynamics()
     }
 
@@ -175,7 +181,7 @@ class AndroidAudioPlayer : AudioPlayer {
                     true,    // enabled
                     true,    // in use
                     0,       // link group
-                    0f,      // threshold dB — engage near full scale
+                    pendingLimiterThresholdDb, // start cutting at/below full scale
                     5f,      // attack ms
                     50f,     // release ms
                     1.5f,    // ratio 1.5:1

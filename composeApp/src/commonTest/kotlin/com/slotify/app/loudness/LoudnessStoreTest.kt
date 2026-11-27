@@ -30,14 +30,18 @@ class LoudnessStoreTest {
     }
 
     @Test
-    fun setCorrectionPersistsMode() {
+    fun setCorrectionPersistsModeAndThreshold() {
         val mem = mutableListOf<String>()
         val store = storeOn(mem)
         store.putTrack("/x.mp3", LoudnessResult(-20.0, 3.0, -1.0))
-        store.setCorrection("/x.mp3", CorrectionMode.CUSTOM, customGainDb = 5.5)
+        store.setCorrection("/x.mp3", CorrectionMode.CUSTOM, customGainDb = 5.5, customLimitThresholdDb = -6.0)
         val t = storeOn(mem).track("/x.mp3")!!
         assertEquals(CorrectionMode.CUSTOM, t.correction)
         assertEquals(5.5, t.customGainDb, 1e-9)
+        assertEquals(-6.0, t.customLimitThresholdDb, 1e-9)
+        // Threshold cannot go above full scale
+        store.setCorrection("/x.mp3", CorrectionMode.CUSTOM, 0.0, customLimitThresholdDb = 3.0)
+        assertEquals(0.0, storeOn(mem).track("/x.mp3")!!.customLimitThresholdDb, 1e-9)
     }
 
     @Test

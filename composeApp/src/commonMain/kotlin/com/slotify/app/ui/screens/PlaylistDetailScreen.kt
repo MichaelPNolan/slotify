@@ -659,8 +659,13 @@ private fun MatchedRow(
             meanLufs = state.playlistMeanLufs(playlistId),
             maxBoostDb = settings.loudnessMaxBoostDb,
             onDismiss = { showLoudnessSheet = false },
-            onMode = { mode, gain ->
-                state.loudnessStore.setCorrection(localPath, mode, gain)
+            onMode = { mode, gain, limitThreshold ->
+                state.loudnessStore.setCorrection(
+                    localPath,
+                    mode,
+                    gain,
+                    customLimitThresholdDb = limitThreshold,
+                )
             },
         )
     }
@@ -879,7 +884,7 @@ private fun LoudnessDetailDialog(
     meanLufs: Double?,
     maxBoostDb: Float,
     onDismiss: () -> Unit,
-    onMode: (CorrectionMode, Double) -> Unit,
+    onMode: (CorrectionMode, Double, Double) -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -911,7 +916,9 @@ private fun LoudnessDetailDialog(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(
                             selected = track.correction == mode,
-                            onClick = { onMode(mode, track.customGainDb) },
+                            onClick = {
+                                onMode(mode, track.customGainDb, track.customLimitThresholdDb)
+                            },
                         )
                         Text(modeLabel(mode))
                     }
@@ -923,14 +930,40 @@ private fun LoudnessDetailDialog(
                     )
                     Slider(
                         value = track.customGainDb.toFloat(),
-                        onValueChange = { v -> onMode(CorrectionMode.CUSTOM, v.toDouble()) },
+                        onValueChange = { v ->
+                            onMode(CorrectionMode.CUSTOM, v.toDouble(), track.customLimitThresholdDb)
+                        },
                         valueRange = -12f..24f,
+                    )
+                    val thr = track.customLimitThresholdDb
+                    Text(
+                        text = if (thr <= -0.05) {
+                            "Limit starts at ${"%.1f".format(thr)} dBFS " +
+                                "(${fmtAbs(thr)} dB below max)"
+                        } else {
+                            "Limit starts at max volume (0 dBFS)"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Slider(
+                        value = thr.toFloat(),
+                        onValueChange = { v ->
+                            onMode(CorrectionMode.CUSTOM, track.customGainDb, v.toDouble())
+                        },
+                        valueRange = -24f..0f,
                     )
                 }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
     )
+}
+
+private fun fmtAbs(db: Double): String {
+    val a = kotlin.math.abs(db)
+    val whole = a.toInt()
+    val tenths = (((a - whole) * 10) + 0.5).toInt()
+    return if (tenths == 0) "$whole" else "$whole.$tenths"
 }
 
 private fun modeLabel(mode: CorrectionMode): String = when (mode) {

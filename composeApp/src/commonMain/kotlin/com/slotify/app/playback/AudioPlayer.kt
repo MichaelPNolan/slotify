@@ -49,8 +49,14 @@ interface AudioPlayer {
      * limiter). Desktop default: no-op. Applied on prepare when possible.
      * [boostDb] ≥ 0 for Recommended; may be negative only for Custom mode.
      * [enableLimiter] true when balance is on (control loud tracks).
+     * [limiterThresholdDb] — dBFS where the limiter starts cutting (0 = full scale;
+     * negative = earlier). Custom mode sets this below max volume.
      */
-    fun setLoudnessCorrection(boostDb: Float, enableLimiter: Boolean) {}
+    fun setLoudnessCorrection(
+        boostDb: Float,
+        enableLimiter: Boolean,
+        limiterThresholdDb: Float = 0f,
+    ) {}
 
     fun stop()
 
