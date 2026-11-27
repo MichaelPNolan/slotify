@@ -44,6 +44,14 @@ interface AudioPlayer {
     /** Output volume, 0f (muted) .. 1f (full). Independent of system volume. */
     fun setVolume(volume: Float)
 
+    /**
+     * Per-track loudness correction (Android DynamicsProcessing: makeup boost +
+     * limiter). Desktop default: no-op. Applied on prepare when possible.
+     * [boostDb] ≥ 0 for Recommended; may be negative only for Custom mode.
+     * [enableLimiter] true when balance is on (control loud tracks).
+     */
+    fun setLoudnessCorrection(boostDb: Float, enableLimiter: Boolean) {}
+
     fun stop()
 
     /** Free native resources. The player is unusable afterwards. */

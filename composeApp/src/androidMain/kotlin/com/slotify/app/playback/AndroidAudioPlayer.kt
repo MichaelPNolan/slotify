@@ -1,6 +1,7 @@
 package com.slotify.app.playback
 
 import android.media.MediaPlayer
+import android.media.audiofx.DynamicsProcessing
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,6 +28,9 @@ class AndroidAudioPlayer : AudioPlayer {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var pollJob: Job? = null
     private var pendingPlay = true
+    private var pendingBoostDb = 0f
+    private var pendingLimiter = false
+    private var dynamics: DynamicsProcessing? = null
 
     private val _snapshot = MutableStateFlow(PlayerSnapshot())
     override val snapshot: StateFlow<PlayerSnapshot> = _snapshot.asStateFlow()
@@ -51,6 +55,7 @@ class AndroidAudioPlayer : AudioPlayer {
             } else {
                 _snapshot.value = _snapshot.value.copy(isPlaying = false)
             }
+            applyDynamics()
             startPositionPolling()
         }
         player.setOnCompletionListener {
@@ -73,6 +78,7 @@ class AndroidAudioPlayer : AudioPlayer {
     override fun load(path: String, startPaused: Boolean) {
         pendingPlay = !startPaused
         stopPositionPolling()
+        clearDynamics()
         runCatching {
             player.reset()
             when {
@@ -128,8 +134,62 @@ class AndroidAudioPlayer : AudioPlayer {
         runCatching { player.setVolume(v, v) }
     }
 
+    override fun setLoudnessCorrection(boostDb: Float, enableLimiter: Boolean) {
+        pendingBoostDb = boostDb
+        pendingLimiter = enableLimiter
+        if (player.audioSessionId > 0) applyDynamics()
+    }
+
+    private fun clearDynamics() {
+        runCatching { dynamics?.release() }
+        dynamics = null
+    }
+
+    /** Makeup boost + optional limiter on this MediaPlayer's session (API 28+). */
+    private fun applyDynamics() {
+        if (android.os.Build.VERSION.SDK_INT < 28) return
+        clearDynamics()
+        val needs = pendingBoostDb > 0.01f || pendingLimiter
+        if (!needs) return
+        val sid = runCatching { player.audioSessionId }.getOrNull() ?: return
+        if (sid <= 0) return
+        runCatching {
+            val cfg = DynamicsProcessing.Config.Builder(
+                DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION,
+                2,   // channels (stereo decode path)
+                false, 0, // preEq off
+                false, 0, // mbc off
+                false, 0, // postEq off
+                pendingLimiter, // limiter
+            ).build()
+            val dpp = DynamicsProcessing(
+                DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION,
+                sid,
+                cfg,
+            )
+            dpp.setInputGainAllChannelsTo(pendingBoostDb.coerceIn(-24f, 24f))
+            if (pendingLimiter) {
+                val limiter = DynamicsProcessing.Limiter(
+                    true,   // enabled
+                    true,   // in use
+                    0,      // link group
+                    -1.5f,  // threshold dB
+                    5f,     // attack ms
+                    50f,    // release ms
+                    20f,    // ratio
+                    0f,     // post gain
+                )
+                dpp.setLimiterAllChannelsTo(limiter)
+            }
+            dynamics = dpp
+        }.onFailure {
+            dynamics = null
+        }
+    }
+
     override fun stop() {
         stopPositionPolling()
+        clearDynamics()
         runCatching {
             player.stop()
             player.reset()
@@ -139,6 +199,7 @@ class AndroidAudioPlayer : AudioPlayer {
 
     override fun release() {
         stopPositionPolling()
+        clearDynamics()
         runCatching { player.release() }
         _snapshot.value = PlayerSnapshot()
     }
