@@ -199,32 +199,8 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
             }
         }
 
-        // Loudness backfill (Android API 28+) — same status line style as YT batch.
-        if (supportsLoudnessBalance()) {
-            val loudnessActive = loudnessStatus != null &&
-                !loudnessStatus!!.startsWith("Loudness done") &&
-                !loudnessStatus!!.startsWith("Loudness cancelled") &&
-                !loudnessStatus!!.startsWith("Loudness failed") &&
-                !loudnessStatus!!.startsWith("All tracks")
-            Spacer(Modifier.size(4.dp))
-            OutlinedButton(
-                onClick = {
-                    if (loudnessActive) state.cancelLoudnessBackfill()
-                    else state.startLoudnessBackfill(playlist.id)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-            ) {
-                Icon(
-                    if (loudnessActive) Icons.Default.Stop else Icons.Default.Download,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(if (loudnessActive) "Stop analysis" else "Analyse loudness")
-            }
-        }
+        // Loudness progress line only — the Analyse/Stop control lives in the
+        // volume row (right of the slider) when the player is paused.
 
         // Batch: auto-fetch unmatched rows whose best YouTube hit scores ≥ settings min.
         // While running the same button stops the batch.

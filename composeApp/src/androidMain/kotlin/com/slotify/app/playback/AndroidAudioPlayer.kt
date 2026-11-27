@@ -1,6 +1,7 @@
 package com.slotify.app.playback
 
 import android.media.MediaPlayer
+import android.media.audiofx.AudioEffect
 import android.media.audiofx.DynamicsProcessing
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -188,6 +189,13 @@ class AndroidAudioPlayer : AudioPlayer {
                     -3f,     // post gain — 3 dB reduction (parameter exists)
                 )
                 dpp.setLimiterAllChannelsTo(limiter)
+            }
+            // AudioEffect instances start disabled — without this the limiter never runs.
+            val st = dpp.setEnabled(true)
+            if (st != AudioEffect.SUCCESS) {
+                dpp.release()
+                dynamics = null
+                return
             }
             dynamics = dpp
         }.onFailure {

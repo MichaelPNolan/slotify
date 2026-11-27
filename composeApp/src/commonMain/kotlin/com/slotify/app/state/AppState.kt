@@ -444,6 +444,14 @@ class AppState(
                 }
             }
         }
+        // Custom threshold / correction changes must hit the *current* track
+        // without requiring a restart — playAt alone would leave a stale limiter.
+        scope.launch {
+            loudnessStore.revision.collect {
+                val path = _nowPlaying.value?.path ?: return@collect
+                applyLoudnessToPlayer(path)
+            }
+        }
         // Periodic resume snapshot while playing (position + index).
         scope.launch {
             while (true) {
