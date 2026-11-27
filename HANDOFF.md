@@ -3,19 +3,19 @@
 Read this (plus `README.md` setup) before continuing on a new machine.
 Source of truth for long-lived notes: project memory `MEMORY.md` under MiMoCode’s data dir; this file is the **in-repo** distilled copy so a fresh clone is enough.
 
-**Branch / release line:** **`0.1.4`** (checked out here). Remote: `https://github.com/MichaelPNolan/slotify.git` (`origin/0.1.4`). Older lines: `0.1.3`, `0.1.2`, `0.0.3`, `main`. Do not re-init git or force-push unless the user asks.
+**Branch / release line:** **`0.1.5`** (checked out here). Remote: `https://github.com/MichaelPNolan/slotify.git` (`origin/0.1.5`). Older lines: `0.1.4`, `0.1.3`, `0.1.2`, `0.0.3`, `main`. Do not re-init git or force-push unless the user asks.
 
-**`VERSION` file:** `0.1.4` — keep it in step with the branch when cutting a new line.
+**`VERSION` file:** `0.1.5` — keep it in step with the branch when cutting a new line.
 
 ---
 
-## Catch-up on this station (branch `0.1.4`)
+## Catch-up on this station (branch `0.1.5`)
 
 This host **already has the repo**. No re-clone:
 
 ```bash
 cd <slotify>
-git status -sb          # expect: ## 0.1.4...origin/0.1.4  (in sync; dirty .mimocode/* + bugs.txt is normal)
+git status -sb          # expect: ## 0.1.5...origin/0.1.5  (in sync; dirty .mimocode/* is normal)
 git pull --ff-only      # only if behind
 git log --oneline -8
 source env.sh           # JAVA_HOME must match THIS machine — confirm $JAVA_HOME/bin/java exists
@@ -29,7 +29,8 @@ source env.sh           # JAVA_HOME must match THIS machine — confirm $JAVA_HO
 
 - **`0.1.2`** — tip before 0.1.3: artist shuffle, cover art, Bing search, batch score, quarantine, etc. (~48 commits from `5d08e0b`).
 - **`0.1.3`** — YouTube cookies.txt; event-driven desktop window sizing (JNA geometry poll removed on KWin).
-- **`0.1.4`** — this line: opened for new work; `VERSION` bumped to `0.1.4`. Tip includes **Link file same-folder sibling fill**.
+- **`0.1.4`** — Link file same-folder sibling fill; Thai filename match; link status (`fb645b0`).
+- **`0.1.5`** — this line: **loudness balance** (EBU R128 + DynamicsProcessing), volume-row remedy/Analyse slot, playlist title-follow, batch-stop + reset-dialog fixes.
 
 ### What landed since the old `0.0.3` handoff (`5d08e0b` → tip, ~50 commits)
 
@@ -46,8 +47,9 @@ source env.sh           # JAVA_HOME must match THIS machine — confirm $JAVA_HO
 | **YouTube cookies** | `0.1.3` | Settings import Netscape `cookies.txt` → private store; yt-dlp `cookiefile` (not Spotify `sp_dc`) |
 | **Desktop window sizing** | `0.1.3` | Event-driven only (AWT `ComponentListener` + Compose `windowState`); **no JNA poll** |
 | **Link file siblings** | `0.1.4` | After successful Link file, pin same-directory audio to **unmatched, non-held rows of that playlist only**; dual-axis title-words + artist gate |
+| **Loudness balance** | `0.1.5` | Pure-Kotlin EBU R128; app-private `loudness.json`; playlist mean; boost-only + DynamicsProcessing limiter (API 28+); volume-row remedy / Analyse when paused — see `reports/loudness-balance.md` |
 
-Design trail for those features: `specs/`, `reports/` in-repo (implementation plans deleted after delivery).
+Design trail for those features: `specs/`, `reports/` in-repo (implementation plans deleted after delivery — loudness plan still in `plans/2026-11-27-loudness-balance.md`).
 
 ### Architecture rows already current on this branch
 
@@ -166,21 +168,23 @@ Design docs: `specs/2026-11-23-*.md`, `reports/artist-shuffle.md`, `reports/cove
 
 ## Open work
 
-Live user bug list: **`bugs.txt`** (untracked; user-owned — do not commit unless asked).
+`bugs.txt` **retired 2026-11-27** (user: list is done — file deleted, was never committed).
 
-### From `bugs.txt` (as of 2026-11-25)
+### Closed from that list (do not reopen as “open bugs”)
 
 | Item | Status |
 |------|--------|
-| Linux resize / GUI does not reflow when tile grows or shrinks | **Dual path + shrink guard** 2026-11-27 — event-driven (KWin) + X11→AWT **grow/unstick only** (niri). **Do not remove either path; do not reintroduce inset-based setSize** (user: reversion if GUI shrinks again). Old “event-only” left 1100×740 in a 1256×1374 tile; 2px “adopt any mismatch” looped on inset delta 10×30. |
-| Batch YT quality (noise words, channel preference, false skips) | **Done** (`75399a7` / T93) — `stripNoise`, channel bonus, `searchUntilScore`, `youtubeBatchMinScore` slider |
-| Download status shows real source filename | **Done** (`75399a7` / T94) |
-| Public search rate-limit / empty after first queries; scrollable results | **Done** (`75399a7` / T95) — DDG→Lite→Bing + per-engine notes |
-| Batch button stops in-flight run | **Done** (`75399a7` / T97) |
-| Tracklist search quality (`word1 + word2` must-include; find own playlists) | **Open — T96** |
+| Linux resize / reflow | **Done** — dual path (AWT ComponentListener + X11 ConfigureNotify); **no timer poll**; never inset-adapt `setSize` (reversion if GUI shrinks). |
+| Batch YT quality | **Done** (`75399a7` / T93) |
+| Download status real filename | **Done** (`75399a7` / T94) |
+| Public search rate-limit / scroll | **Done** (`75399a7` / T95) |
+| Batch stop button | **Done** (`75399a7` / T97) |
+| Link file cascade + Thai filename match + live status | **Done** (`fb645b0` / T98) — one playlist; filename-only sibling walk |
 
-### Still open (not in `bugs.txt`)
+### Still open
 
+- **Loudness limiter — real device audio not yet proven (user, 2026-11-27):** Custom threshold/gain changes **still inaudible** on device after `setEnabled(true)` + re-apply-on-store-change (`ce6a969`). **TODO: real listening tests** (loud track, Custom mode, sweep threshold −24…0 and gain; confirm DynamicsProcessing actually processes MediaPlayer stream; consider logcat `AudioEffect` / `DynamicsProcessing`, session id, or A/B with postGain only). Unit tests do **not** cover device audio.
+- **T96 tracklist search quality** (`word1 + word2` must-include; find user’s own playlists) — was on `bugs.txt`, not implemented.
 - **T2 content-fingerprint reconnect**: size + head/tail hash per match; scan re-binds by fingerprint first; play-failure self-heal beyond quarantine. (Designed, not built.)
 - Android: **token storage still in-memory** if any PKCE path is revived; launcher icon from `graphics/slotify.png`.
 - Android YouTube / SAF Link / phone transfer / batch / **Link file siblings on device** — **device-proven only if the user says so**; still treat as smoke-test territory. Debug APK ~**66MB**; release → ABI splits/AAB. Free `yt-dlp-android` has no curl-cffi. Sibling fill skips `content://` (no FS directory).
@@ -188,6 +192,7 @@ Live user bug list: **`bugs.txt`** (untracked; user-owned — do not commit unle
 - Played set is **in-memory only** (spec: restart clears) — if user wants persistence, that’s a product change.
 - Listen-to-confirm UX for fuzzy matches; multi-format play preference (flac→opus→…).
 - YouTube **PO tokens** not integrated (yt-dlp-android 2.0.2) — investigate only if cookies.txt is insufficient.
+- YouTube cookies **UX/privacy copy** (dedicated account wording / optional in-app login) — parked; import path already works.
 
 ---
 
