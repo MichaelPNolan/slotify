@@ -4,7 +4,7 @@ Playlists in, your own files out. Import Spotify playlist **metadata** (never au
 
 **Desktop is the primary development target.** Android shares the same Compose Multiplatform code (thin `:androidApp` APK shell).
 
-Current release line: **`0.0.3`** (see `VERSION`).
+Current release line: **`0.1.4`** (see `VERSION`).
 
 ---
 
@@ -15,7 +15,7 @@ Clone:
 ```bash
 git clone https://github.com/MichaelPNolan/slotify.git
 cd slotify
-git checkout 0.0.3    # or main / the branch you want
+git checkout 0.1.4    # or main / the branch you want
 ```
 
 **Before you code:** read [`HANDOFF.md`](HANDOFF.md) — hard rules, architecture, Spotify/embed constraints, feature map, open work, and how to rebuild `.mimocode/`.

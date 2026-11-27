@@ -3,19 +3,19 @@
 Read this (plus `README.md` setup) before continuing on a new machine.
 Source of truth for long-lived notes: project memory `MEMORY.md` under MiMoCode’s data dir; this file is the **in-repo** distilled copy so a fresh clone is enough.
 
-**Branch / release line:** **`0.1.3`** (checked out here). Remote: `https://github.com/MichaelPNolan/slotify.git` (`origin/0.1.3`). Older lines: `0.1.2`, `0.0.3`, `main`. Do not re-init git or force-push unless the user asks.
+**Branch / release line:** **`0.1.4`** (checked out here). Remote: `https://github.com/MichaelPNolan/slotify.git` (`origin/0.1.4`). Older lines: `0.1.3`, `0.1.2`, `0.0.3`, `main`. Do not re-init git or force-push unless the user asks.
 
-**`VERSION` file:** `0.1.3` — keep it in step with the branch when cutting a new line.
+**`VERSION` file:** `0.1.4` — keep it in step with the branch when cutting a new line.
 
 ---
 
-## Catch-up on this station (branch `0.1.3`)
+## Catch-up on this station (branch `0.1.4`)
 
 This host **already has the repo**. No re-clone:
 
 ```bash
 cd <slotify>
-git status -sb          # expect: ## 0.1.3...origin/0.1.3  (after first push)
+git status -sb          # expect: ## 0.1.4...origin/0.1.4  (after first push)
 git pull --ff-only      # only if behind
 git log --oneline -8
 source env.sh           # JAVA_HOME must match THIS machine
@@ -25,10 +25,11 @@ source env.sh           # JAVA_HOME must match THIS machine
 
 ### History
 
-- **`0.1.2`** — tip before this branch: artist shuffle, cover art, Bing search, batch score, quarantine, etc. (~48 commits from `5d08e0b`).
-- **`0.1.3`** — this line: opened for new work; `VERSION` bumped to `0.1.3`.
+- **`0.1.2`** — tip before 0.1.3: artist shuffle, cover art, Bing search, batch score, quarantine, etc. (~48 commits from `5d08e0b`).
+- **`0.1.3`** — YouTube cookies.txt; event-driven desktop window sizing (JNA geometry poll removed on KWin).
+- **`0.1.4`** — this line: opened for new work; `VERSION` bumped to `0.1.4`. Tip includes **Link file same-folder sibling fill**.
 
-### What landed since the old `0.0.3` handoff (`5d08e0b` → `75399a7`, ~48 commits)
+### What landed since the old `0.0.3` handoff (`5d08e0b` → tip, ~50 commits)
 
 | Theme | Branch / area | Summary |
 |--------|----------------|---------|
@@ -40,6 +41,9 @@ source env.sh           # JAVA_HOME must match THIS machine
 | **UI polish** | `0.1.2` | `LinkFileDialog`, `LegalDisclaimer`, PKCE await plumbing **removed** from Settings |
 | **Batch YT** | `0.1.2` | Configurable min score; search fallbacks until bar clears; same button stops batch |
 | **Rename / heal** | 0.1.x | Editable song-name walk; pins survive; broken rows → To be sourced + held |
+| **YouTube cookies** | `0.1.3` | Settings import Netscape `cookies.txt` → private store; yt-dlp `cookiefile` (not Spotify `sp_dc`) |
+| **Desktop window sizing** | `0.1.3` | Event-driven only (AWT `ComponentListener` + Compose `windowState`); **no JNA poll** |
+| **Link file siblings** | `0.1.4` | After successful Link file, pin same-directory audio to **unmatched, non-held rows of that playlist only**; dual-axis title-words + artist gate |
 
 Design trail for those features: `specs/`, `plans/`, `reports/` in-repo.
 
@@ -49,6 +53,7 @@ Design trail for those features: `specs/`, `plans/`, `reports/` in-repo.
 - **Android write grant:** `READ_MEDIA_AUDIO` is not enough for `/sdcard/Music` writes — `MANAGE_EXTERNAL_STORAGE` + `requestSharedMusicWriteAccess()` (All files access Settings) on EPERM.
 - **Android play icon:** optimistic `isPlaying` on load/play (prepareAsync used to leave the button on “Play”).
 - **Spotify Settings:** connection / PKCE / browser-cookie **probe section removed**; URL paste + public search remain. Manual `sp_dc`/embed cookie path still used for private playlist **import** via Floorp reader on desktop.
+- **Link file sibling fill (0.1.4):** `Matcher.siblingMatchConfidence` + `assignSiblingLinks`. **Only** unmatched + non-held rows of the playlist you linked in. Title evidence (containment or ≥1 significant shared title word on tag **or** filename) **and** artist evidence when both known. One file → one track. Skips matched paths, existing pins, quarantine. Android `content://` → no directory walk (returns 0).
 
 ---
 
@@ -90,8 +95,8 @@ User confirmed earlier (2026-10-27): desktop live. 0.0.2–0.0.3 (2026-11-22): A
 | Persistence | JSON under app data (`~/.local/share/slotify/` desktop; `filesDir` Android). Atomic tmp+rename. **`playback.json`** = mode + resume (index/position). **`quarantine.json`** = corrupt paths. `LocalTrack.mark` re-applied by path after rescan. |
 | Managed music dir | Desktop `~/Music/Slotify`. **Android YT writes Settings music root** (first `libraryRoots`, e.g. `/sdcard/Music`), staging `<root>/downloads`, promote to root — see YouTube row. |
 | Spotify | Embed URL import primary; **public search DDG HTML → DDG Lite → Bing** (+ bare-URL scan). Settings **no longer has** PKCE/browser-session connect UI (removed 0.1.x); private embeds still use Floorp `sp_dc` on desktop. |
-| Matcher | ISRC → 0.99; both-axes containment → ≥0.95; blend title 0.55 / artist 0.30 / duration 0.15. Duration soft (vinyl); >120s gap caps 0.80. Wrong-artist gate caps at 0.70. **Also scores filename-parsed title/artist and takes max(tag, filename)** so Android/desktop tag disagreement does not flip matches. |
-| Manual pins | `manual_links.json`: playlistId → trackKey → path. Rematch applies pins first (`isManual`, conf 1.0). `trackKey` = Spotify id → uri → `name\|artistNames`. Portable copy under Music root; paths **remapped** on load (`ManualLinks.remapMusicPaths`). |
+| Matcher | ISRC → 0.99; both-axes containment → ≥0.95; blend title 0.55 / artist 0.30 / duration 0.15. Duration soft (vinyl); >120s gap caps 0.80. Wrong-artist gate caps at 0.70. **Also scores filename-parsed title/artist and takes max(tag, filename)** so Android/desktop tag disagreement does not flip matches. **Sibling fill (0.1.4):** `siblingMatchConfidence` / `assignSiblingLinks` — title words + artist required; artist alone never enough. |
+| Manual pins | `manual_links.json`: playlistId → trackKey → path. Rematch applies pins first (`isManual`, conf 1.0). `trackKey` = Spotify id → uri → `name\|artistNames`. Portable copy under Music root; paths **remapped** on load (`ManualLinks.remapMusicPaths`). Sibling auto-pins write **only** the playlist you linked in. |
 | YouTube | **Desktop:** system `yt-dlp` + ffmpeg (`YoutubeDlpSource`) — flags `-f "251/140/bestaudio" -x --audio-format best --embed-metadata --embed-thumbnail` (unchanged). **Android:** bundled yt-dlp via Chaquopy (`dev.ffmpegkit-maintained:yt-dlp-android:2.0.2`) + `ffmpeg-kit-audio` remux (`YoutubeSource.android.kt`). **Do not unify** — Chaquopy on phone, system binary on Linux (user, 2026-11-23). Search/download use a helper Python module (`slotify_ytdlp.py` in app filesDir) because the stock `ytdlp_runner` omits `--dump-json`/`--flat-playlist`/`full format control`. **Chaquopy edges:** never `PyObject.toJava(List)` on `sys.path`/`sys.modules`; Python `search()` returns a JSON **string** only. **Download dir = Settings music root** (`libraryRoots` first, e.g. `/sdcard/Music`), staging `<root>/downloads` (fallback `<root>` if subdir not writable); **promote completed file to the music root** — not a hardcoded `Slotify/` path (user, 2026-11-23). Write-probe before fetch. **HTTP 403:** helper retries `player_client` sets × formats; mobile UA + referer; stream copy only. **Error UI:** download failures write **only** `youtubeStatus` (red inside Find dialog) — **never** `emit()`/snackbar while that dialog is open (snackbar sits behind AlertDialog). Results re-enable after failure (busy = in-flight status only). ABIs: arm64-v8a + x86_64. Fallback search phrasings. Index **only the new file**. Auto-pin download to requesting row. **YouTube cookies.txt (2026-11-23):** Settings → Import Netscape `cookies.txt` → private `filesDir/secrets/youtube_cookies.txt` (desktop: `~/.local/share/slotify/secrets/`). Passed as yt-dlp `cookiefile` / `--cookies` when present. **Not** Spotify Floorp `sp_dc` (`BrowserSession`). Bot-check errors stop retries and show Settings guidance; never log contents/paths. Backup excludes `secrets/`. **PO tokens:** not bundled — investigate separately if bot-check persists with valid cookies. |
 | Batch YouTube | Unmatched rows; threshold = **`settings.youtubeBatchMinScore`** (default **0.85**, slider in Settings + detail). Search **fallbacks keep trying until best ≥ minScore**. Same button **stops** an in-flight batch. Status on `youtubeStatus` / `youtubeBatchRunning`. |
 | Portable transfer | Export/import `playlists.json` + `manual_links.json` to/from **Music library roots** (not `Slotify/`). Cold start: app-private playlists win; else Music-root portable file is loaded once and copied into app data. Pins merged portable → app. |
@@ -135,14 +140,14 @@ User confirmed earlier (2026-10-27): desktop live. 0.0.2–0.0.3 (2026-11-22): A
 
 ---
 
-## Feature map (0.0.x → 0.1.2)
+## Feature map (0.0.x → 0.1.4)
 
 | Area | Behavior |
 |------|----------|
 | Playlists tab | URL paste + clipboard; public search (DDG→Bing); Refresh (OAuth merge); mark → trash; trash always visible + empty; play/stop cards. |
-| Playlist detail | Single LazyColumn (To be sourced + Matched). Filter. Row marks. **`LinkFileDialog`** (search/re-match path). Find on YouTube / batch (tunable min score, stop button). **Hold 5s / swipe** → redo. Swipe **unsourced** row left → confirm → remove from playlist. **% badge tap = pin** (Linked chip gone). Confidence chip not a one-click play. |
+| Playlist detail | Single LazyColumn (To be sourced + Matched). Filter. Row marks. **`LinkFileDialog`** (search/re-match path). **After Link file succeeds:** same-directory siblings auto-pin to **unmatched, non-held rows of that playlist only** (title+artist gate; toast `+N nearby track(s)`). Find on YouTube / batch (tunable min score, stop button). **Hold 5s / swipe** → redo. Swipe **unsourced** row left → confirm → remove from playlist. **% badge tap = pin** (Linked chip gone). Confidence chip not a one-click play. |
 | Library tab | Search; **Find current** (player-bar title tap jumps here + scrolls to playing row); highlight/grey played; **m/s/d** mark chips; **+** add-to-playlist (create/append, pinned conf 1.0). Auto-follow: tap playing title locks, drag releases. |
-| Settings | URL import; roots + scan; **batch min-score slider**; Music export/import + desktop symlink stage; JSON pick/path; **Legal disclaimer**; About. **No** Spotify connection / browser-session probe / PKCE await. Persistent **Last error**. |
+| Settings | URL import; roots + scan; **batch min-score slider**; **YouTube cookies.txt import** (private store); Music export/import + desktop symlink stage; JSON pick/path; **Legal disclaimer**; About. **No** Spotify connection / browser-session probe / PKCE await. Persistent **Last error**. |
 | Playback | Four modes + played set (in-memory) + artist blocks; resume from `playback.json`; row tap starts **that** row (saved resume is header-only). Marks skip/delete out of queue. Corrupt file → quarantine + To be sourced + hold. |
 | Cover art | `CoverBackdrop` behind list regions only (headers plain). Embedded art only (opus parser / jaudiotagger / MediaMetadataRetriever); **never** fetch/generate a substitute. 6-entry LRU. Android `content://` supported. |
 | Rename / heal | One-at-a-time editable rename walk (primary artist conservative); live pins kept; healed rows rematch immediately; broken paths → unsourced + held. |
@@ -156,11 +161,11 @@ Design docs: `specs/2026-11-23-*.md`, `plans/…`, `reports/artist-shuffle.md`, 
 
 - **T2 content-fingerprint reconnect**: size + head/tail hash per match; scan re-binds by fingerprint first; play-failure self-heal beyond quarantine. (Designed, not built.)
 - Android: **token storage still in-memory** if any PKCE path is revived; launcher icon from `graphics/slotify.png`.
-- Android YouTube / SAF Link / phone transfer / batch — **device-proven only if the user says so**; still treat as smoke-test territory. Debug APK ~**66MB**; release → ABI splits/AAB. Free `yt-dlp-android` has no curl-cffi.
+- Android YouTube / SAF Link / phone transfer / batch / **Link file siblings on device** — **device-proven only if the user says so**; still treat as smoke-test territory. Debug APK ~**66MB**; release → ABI splits/AAB. Free `yt-dlp-android` has no curl-cffi. Sibling fill skips `content://` (no FS directory).
 - **Already-downloaded** YouTube files (pre-Spotify-naming) may still have wrong titles/tags — re-fetch or re-link.
 - Played set is **in-memory only** (spec: restart clears) — if user wants persistence, that’s a product change.
 - Listen-to-confirm UX for fuzzy matches; multi-format play preference (flac→opus→…).
-- `VERSION` still `0.0.3` while branch is `0.1.2` — bump only when cutting a release label.
+- YouTube **PO tokens** not integrated (yt-dlp-android 2.0.2) — investigate only if cookies.txt is insufficient.
 
 ---
 
@@ -191,7 +196,7 @@ SLOTIFY_DEMO=1 ./run.sh           # demo fixtures
 
 - Original authoring host: Manjaro x86_64, KDE Wayland; Floorp; ffmpeg n9.0.1; yt-dlp 2026.08.19; VLC 3.0.23.
 - Previous host (CachyOS): yt-dlp 2026.08.19, ffmpeg n9.0.2, libvlc 3.0.23 + `vlc-plugins-base`. JDK 21 at `~/tools/jdk-21.0.13+9` (see `env.sh`); Android SDK at `~/tools/android-sdk` with `platforms;android-37.0` + `build-tools;35.0.0`.
-- This host (last re-measure in-tree): JDK path in `env.sh` (`JAVA_HOME` — confirm it exists here); Android SDK `~/tools/android-sdk` with `platforms;android-37.0`. Branch **`0.1.2`** after `git pull`. APK ~66MB (yt-dlp/ffmpeg natives).
+- This host (last re-measure): **KDE KWin Wayland** (was niri). JDK path in `env.sh` (`JAVA_HOME` — confirm it exists here; known value `~/tools/jdk-21.0.13+9`). Android SDK `~/tools/android-sdk` with `platforms;android-37.0`. Branch **`0.1.4`** after `git pull`. APK ~66MB (yt-dlp/ffmpeg natives).
 - Library: `/home/owner/Music` (~98 files post-whitelist on original host; 40 `.m4a` excluded by design). Android default root `/sdcard/Music` (single path — do not also add `/storage/emulated/0/Music` or files double-count before canonicalization).
 
 Do **not** commit: `spotify-app.txt`, `~/.local/share/slotify/*` / Android `filesDir` JSON, cookies, Client IDs in notes if avoidable (Client ID in Settings is public-ish for PKCE but still machine state).

@@ -37,6 +37,19 @@ object Matcher {
      */
     const val MIN_ARTIST_SIMILARITY = 0.60
 
+    /**
+     * Slightly lower bar for same-folder sibling fills after Link file —
+     * still requires title + artist evidence (see [siblingMatchConfidence]).
+     */
+    const val SIBLING_THRESHOLD = 0.70
+
+    /** Words that never count as title evidence on their own. */
+    private val TITLE_STOPWORDS = setOf(
+        "the", "a", "an", "of", "and", "or", "to", "in", "on", "at", "by",
+        "for", "with", "feat", "ft", "vs", "part", "interlude", "intro",
+        "outro", "live", "remix", "remaster", "version", "edit",
+    )
+
     // ── Public API ───────────────────────────────────────────────────
 
     fun matchConfidence(remote: RemoteTrack, local: LocalTrack): Double {
@@ -131,6 +144,60 @@ object Matcher {
     ): TrackMatch? = LocalTrackIndex(locals).bestMatch(remote, threshold)
 
     /**
+     * Same-folder sibling score after a successful Link file.
+     *
+     * Stricter than fuzzy on purpose: artist alone is never enough.
+     * Requires **title evidence** (containment or ≥1 significant shared
+     * title word on the tag or filename axis) **and**, when both sides know
+     * the artist, artist containment / similarity. Returns null when either
+     * gate fails or confidence is below [SIBLING_THRESHOLD].
+     */
+    fun siblingMatchConfidence(remote: RemoteTrack, local: LocalTrack): Double? {
+        if (!siblingTitleEvidence(remote, local)) return null
+        if (!siblingArtistEvidence(remote, local)) return null
+        val conf = matchConfidence(remote, local)
+        return if (conf >= SIBLING_THRESHOLD) conf else null
+    }
+
+    /**
+     * Exclusive assignment of sibling files to **already-open** playlist rows.
+     *
+     * [openRemotes] must be filtered by the caller to unmatched, non-held
+     * rows of **one** playlist — this function never inspects other rows or
+     * other playlists. Each file pins at most one track; each track at most
+     * one file. Returns trackKey → path (see [trackKey]).
+     */
+    fun assignSiblingLinks(
+        openRemotes: List<RemoteTrack>,
+        siblingLocals: List<LocalTrack>,
+        threshold: Double = SIBLING_THRESHOLD,
+    ): Map<String, String> {
+        if (openRemotes.isEmpty() || siblingLocals.isEmpty()) return emptyMap()
+        data class Cand(val score: Double, val key: String, val path: String)
+        val candidates = buildList {
+            for (remote in openRemotes) {
+                val key = trackKey(remote)
+                for (local in siblingLocals) {
+                    val score = siblingMatchConfidence(remote, local) ?: continue
+                    if (score < threshold) continue
+                    add(Cand(score, key, local.filePath))
+                }
+            }
+        }
+        if (candidates.isEmpty()) return emptyMap()
+        val usedKeys = HashSet<String>()
+        val usedPaths = HashSet<String>()
+        val pins = LinkedHashMap<String, String>()
+        for (c in candidates.sortedByDescending { it.score }) {
+            if (c.key in usedKeys || c.path in usedPaths) continue
+            pins[c.key] = c.path
+            usedKeys += c.key
+            usedPaths += c.path
+        }
+        return pins
+    }
+
+    /**
      * Stable key for manual file links across rematches / re-imports.
      * Prefers Spotify id, then URI, then title|artists.
      */
@@ -186,6 +253,58 @@ object Matcher {
     }
 
     // ── Similarity internals ─────────────────────────────────────────
+
+    /**
+     * Title must be present on the pair: bidirectional containment of the
+     * normalized titles, or ≥1 shared significant word (stopwords ignored)
+     * against either the tag title or the filename-parsed title.
+     */
+    private fun siblingTitleEvidence(remote: RemoteTrack, local: LocalTrack): Boolean {
+        val nRemote = normalizeStr(remote.name)
+        if (nRemote.isEmpty()) return false
+        val remoteWords = tokenSet(remote.name)
+            .filter { it.isNotEmpty() && it !in TITLE_STOPWORDS }
+            .toSet()
+        val localTitles = listOfNotNull(
+            local.title?.takeIf { it.isNotBlank() },
+            parseFilename(local.nameForFilenameParse).title,
+        ).distinct()
+        for (raw in localTitles) {
+            val nLocal = normalizeStr(raw)
+            if (nLocal.isEmpty()) continue
+            if (nRemote.contains(nLocal) || nLocal.contains(nRemote)) return true
+            val localWords = tokenSet(raw).filterNot { it in TITLE_STOPWORDS }.toSet()
+            if (remoteWords.isNotEmpty() && localWords.isNotEmpty() &&
+                remoteWords.intersect(localWords).isNotEmpty()
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * When the local side has artist metadata (tag or filename), require a
+     * reasonable artist match. Unknown local artist does not block — title
+     * evidence already carries the pair (album folders often lack tags).
+     */
+    private fun siblingArtistEvidence(remote: RemoteTrack, local: LocalTrack): Boolean {
+        val remoteArtists = remote.artists.mapNotNull { a ->
+            normalizeStr(a.name).takeIf { it.isNotEmpty() }
+        }
+        if (remoteArtists.isEmpty()) return true
+        val localArtists = listOfNotNull(
+            local.artist?.takeIf { it.isNotBlank() }?.let { normalizeStr(it) },
+            parseFilename(local.nameForFilenameParse).artist?.let { normalizeStr(it) },
+        ).filter { it.isNotEmpty() }.distinct()
+        if (localArtists.isEmpty()) return true
+        return localArtists.any { l ->
+            remoteArtists.any { r ->
+                l.contains(r) || r.contains(l) ||
+                    gradedSimilarity(r, l, r, l) >= MIN_ARTIST_SIMILARITY
+            }
+        }
+    }
 
     /**
      * Title-only similarity for ranking third-party search results (YouTube):

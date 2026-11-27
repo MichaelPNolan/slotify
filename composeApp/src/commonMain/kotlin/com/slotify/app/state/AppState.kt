@@ -9,6 +9,7 @@ import com.slotify.app.data.ManualLinks
 import com.slotify.app.data.PlaybackStore
 import com.slotify.app.data.PlaylistProgress
 import com.slotify.app.data.Quarantine
+import com.slotify.app.library.AUDIO_EXTENSIONS
 import com.slotify.app.library.CoverArtCache
 import com.slotify.app.library.CoverArtReader
 import com.slotify.app.library.createCoverArtReader
@@ -2265,9 +2266,110 @@ class AppState(
                 quarantine.remove(local.filePath)
                 withContext(Dispatchers.IO) { repository.saveQuarantine(quarantine.all) }
             }
+            val siblingPins = autoLinkSiblingsFromDirectory(playlistId, local.filePath)
             matchPlaylist(playlistId)
-            emit("Linked to ${local.displayTitle}")
+            emit(
+                when {
+                    siblingPins > 0 ->
+                        "Linked to ${local.displayTitle} · +$siblingPins nearby track(s)"
+                    else -> "Linked to ${local.displayTitle}"
+                },
+            )
         }
+    }
+
+    /**
+     * After a successful Link file, pin sibling audio files in the **same
+     * directory** to still-unmatched rows of **this playlist only**.
+     *
+     * Safety rails (user: only unmatched in same playlist — be careful):
+     * - never touches a row that already has a match
+     * - never touches held rows (corrupt-file quarantine holds)
+     * - never writes another playlist's `manual_links`
+     * - exclusive: one file → one track, one track → one file
+     * - dual-axis gate in [Matcher.siblingMatchConfidence] (title words + artist)
+     *
+     * Returns how many extra pins were added (0 when the path has no usable
+     * directory, e.g. Android `content://` URIs).
+     */
+    private suspend fun autoLinkSiblingsFromDirectory(playlistId: String, linkedPath: String): Int {
+        if (linkedPath.startsWith("content://")) return 0
+        val dir = java.io.File(linkedPath).parentFile ?: return 0
+        if (!dir.isDirectory) return 0
+
+        val playlist = _playlists.value.firstOrNull { it.id == playlistId } ?: return 0
+        val held = playlist.heldTrackKeys
+        val existingPins = _manualLinks.value.linksFor(playlistId)
+
+        // Unmatched + not held + not already pinned in THIS playlist.
+        val openRemotes = playlist.resolvedTracks
+            .filter { row ->
+                val key = Matcher.trackKey(row.remote)
+                row.match == null && key !in held && key !in existingPins
+            }
+            .map { it.remote }
+        if (openRemotes.isEmpty()) return 0
+
+        val alreadyUsedPaths = buildSet {
+            add(linkedPath)
+            addAll(existingPins.values)
+            playlist.resolvedTracks.forEach { row -> row.match?.local?.filePath?.let { add(it) } }
+        }
+
+        val siblingFiles = withContext(Dispatchers.IO) {
+            dir.listFiles()
+                ?.filter { f ->
+                    f.isFile &&
+                        !f.name.startsWith(".") &&
+                        f.extension.lowercase() in AUDIO_EXTENSIONS &&
+                        f.absolutePath !in alreadyUsedPaths &&
+                        f.canonicalPath !in alreadyUsedPaths &&
+                        !quarantine.contains(f.absolutePath) &&
+                        !quarantine.contains(f.canonicalPath)
+                }
+                ?.toList()
+                .orEmpty()
+        }
+        if (siblingFiles.isEmpty()) return 0
+
+        // Index siblings that the library does not know yet (same folder as
+        // the user's explicit pick — safe to read tags for matching only).
+        var locals = _library.value
+        var libraryChanged = false
+        for (f in siblingFiles) {
+            val path = f.absolutePath
+            if (locals.any { it.filePath == path || it.filePath == f.canonicalPath }) continue
+            val t = scanner.readTrack(path) ?: continue
+            if (locals.none { it.filePath == t.filePath }) {
+                locals = locals + t
+                libraryChanged = true
+            }
+        }
+        if (libraryChanged) {
+            _library.value = locals
+            withContext(Dispatchers.IO) { repository.saveLibrary(locals) }
+        }
+
+        val siblingLocals = siblingFiles.mapNotNull { f ->
+            locals.find { it.filePath == f.absolutePath || it.filePath == f.canonicalPath }
+        }
+        val pins = Matcher.assignSiblingLinks(openRemotes, siblingLocals)
+        if (pins.isEmpty()) return 0
+
+        var links = _manualLinks.value
+        var added = 0
+        for ((key, path) in pins) {
+            // Re-check: only this playlist, only still-open rows.
+            val row = playlist.resolvedTracks.find { Matcher.trackKey(it.remote) == key }
+            if (row == null || row.match != null || key in held) continue
+            if (links.linksFor(playlistId).containsKey(key)) continue
+            links = links.put(playlistId, key, path)
+            added++
+        }
+        if (added == 0) return 0
+        _manualLinks.value = links
+        withContext(Dispatchers.IO) { repository.saveManualLinks(links) }
+        return added
     }
 
     /** Drop a manual pin so the row falls back to fuzzy matching. */
