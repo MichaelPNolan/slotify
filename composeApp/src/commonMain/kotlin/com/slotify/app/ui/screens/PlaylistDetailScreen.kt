@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -38,6 +39,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -321,10 +323,39 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
         val matchedAll = playlist.resolvedTracks.withIndex().filter { it.value.isMatched }
         val matchedFiltered = matchedAll.filter { matchesFilter(it.value) }
 
+        val listState = rememberLazyListState()
+        val playlistFollowTick by state.playlistFollowTick.collectAsState()
+        val activePlaylistId by state.activePlaylistId.collectAsState()
+        LaunchedEffect(playlistFollowTick, nowPlayingPath(state), matchedFiltered, unmatchedFiltered) {
+            if (playlistFollowTick <= 0) return@LaunchedEffect
+            if (activePlaylistId != playlistId) return@LaunchedEffect
+            val np = state.nowPlaying.value ?: return@LaunchedEffect
+            var offset = 0
+            if (unmatchedAll.isNotEmpty()) {
+                offset += 1 // header
+                val uIdx = unmatchedFiltered.indexOfFirst { (_, row) ->
+                    rowMatchesNowPlaying(row, np.path, np.title, np.artist)
+                }
+                if (uIdx >= 0) {
+                    listState.animateScrollToItem(offset + uIdx)
+                    return@LaunchedEffect
+                }
+                offset += unmatchedFiltered.size + 1 // rows + divider
+            }
+            offset += 1 // matched header
+            val mIdx = matchedFiltered.indexOfFirst { (_, row) ->
+                rowMatchesNowPlaying(row, np.path, np.title, np.artist)
+            }
+            if (mIdx >= 0) {
+                listState.animateScrollToItem(offset + mIdx)
+            }
+        }
+
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
             CoverBackdrop(state)
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
+                state = listState,
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
             ) {
                 // ── To be sourced ────────────────────────────────────────
@@ -906,4 +937,22 @@ private fun modeLabel(mode: CorrectionMode): String = when (mode) {
     CorrectionMode.RECOMMENDED -> "Recommended"
     CorrectionMode.BYPASS -> "Bypass"
     CorrectionMode.CUSTOM -> "Custom"
+}
+
+private fun nowPlayingPath(state: AppState): String? = state.nowPlaying.value?.path
+
+private fun rowMatchesNowPlaying(
+    row: ResolvedPlaylistTrack,
+    path: String?,
+    title: String,
+    artist: String,
+): Boolean {
+    val local = row.match?.local?.filePath
+    if (local != null && path != null) {
+        if (local == path) return true
+        if (com.slotify.app.data.resolveSymlinkTarget(local) == path) return true
+    }
+    return row.remote.name == title &&
+        (artist.isBlank() || artist == row.remote.artistNames ||
+            row.remote.artistNames.contains(artist))
 }

@@ -87,8 +87,8 @@ fun PlayerBar(state: AppState) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
-                        .clickable { state.engageLibraryFollow() }
-                        .semantics { contentDescription = "Follow current song in library" },
+                        .clickable { state.engageCurrentFollow() }
+                        .semantics { contentDescription = "Show current song in playlist or library" },
                 )
                 Text(
                     text = "${now.artist} · ${formatMs(position)} / ${formatMs(duration)}",

@@ -361,7 +361,49 @@ class AppState(
     private val _libraryFollowTick = MutableStateFlow(0)
     val libraryFollowTick: StateFlow<Int> = _libraryFollowTick.asStateFlow()
 
-    /** Player-bar title tap: lock follow, jump to Library, (re)center on the song. */
+    /** Bumped when title-tap should re-center the **playlist** detail list. */
+    private val _playlistFollowTick = MutableStateFlow(0)
+    val playlistFollowTick: StateFlow<Int> = _playlistFollowTick.asStateFlow()
+
+    /** True when the now-playing song is a matched row of [playlistId]. */
+    fun nowPlayingIsInPlaylist(playlistId: String): Boolean {
+        val np = _nowPlaying.value ?: return false
+        val playlist = _playlists.value.find { it.id == playlistId } ?: return false
+        return playlist.resolvedTracks.any { row ->
+            val local = row.match?.local?.filePath
+            val byPath = local != null && (
+                local == np.path ||
+                    com.slotify.app.data.resolveSymlinkTarget(local) == np.path
+                )
+            val byTitle = row.remote.name == np.title &&
+                (np.artist.isBlank() || np.artist == row.remote.artistNames ||
+                    row.remote.artistNames.contains(np.artist))
+            byPath || byTitle
+        }
+    }
+
+    /**
+     * Player-bar title tap: highlight the song in the current playlist when
+     * it belongs there; otherwise fall back to Library follow.
+     */
+    fun engageCurrentFollow() {
+        val plId = _activePlaylistId.value
+        if (preferPlaylistFollow(
+                hasNowPlaying = _nowPlaying.value != null,
+                activePlaylistId = plId,
+                nowPlayingInActivePlaylist = plId != null && nowPlayingIsInPlaylist(plId),
+            )
+        ) {
+            _playlistFollowTick.value++
+            if (_ui.value.tab != Tab.PLAYLISTS || _ui.value.detailPlaylistId != plId) {
+                openPlaylist(plId!!)
+            }
+            return
+        }
+        engageLibraryFollow()
+    }
+
+    /** Player-bar title tap (library-only path): lock follow, jump to Library. */
     fun engageLibraryFollow() {
         _libraryFollow.value = true
         _libraryFollowTick.value++
