@@ -27,6 +27,12 @@ data class AppSettings(
     val disclaimerAccepted: Boolean = false,
     /** Playlist that most recently received an added song (Add dialog shows it first). */
     val lastAddedPlaylistId: String? = null,
+    /** Loudness balance toward playlist mean (Android API 28+ only). */
+    val loudnessBalance: Boolean = false,
+    /** Cap for Recommended boost, dB. */
+    val loudnessMaxBoostDb: Float = 12f,
+    /** Advanced: show 0–99 loudness chips on playlist rows. */
+    val showLoudnessChips: Boolean = false,
 )
 
 /** Resume point for one playlist (survives app restart). */

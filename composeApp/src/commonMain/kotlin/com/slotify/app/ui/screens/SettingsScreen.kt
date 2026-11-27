@@ -28,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -39,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.slotify.app.loudness.supportsLoudnessBalance
 import com.slotify.app.model.RowMark
 import com.slotify.app.state.AppState
 import com.slotify.app.ui.CoverBackdrop
@@ -208,6 +210,64 @@ fun SettingsScreen(state: AppState) {
                     steps = 49, // 1% increments from 50–100
                     modifier = Modifier.fillMaxWidth(),
                 )
+
+                if (supportsLoudnessBalance()) {
+                    HorizontalDivider()
+                    // ── Loudness balance ──────────────────────────────────
+                    SectionTitle("Loudness balance")
+                    Text(
+                        text = "Analyse songs and balance quiet tracks toward this playlist’s " +
+                            "average loudness. Loud songs are limited, never cut. API 28+ only.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Enable balance",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(
+                            checked = settings.loudnessBalance,
+                            onCheckedChange = { on ->
+                                state.updateSettings { s -> s.copy(loudnessBalance = on) }
+                            },
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Max boost",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            text = "+${settings.loudnessMaxBoostDb.toInt()} dB",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    Slider(
+                        value = settings.loudnessMaxBoostDb,
+                        onValueChange = { v ->
+                            state.updateSettings { s -> s.copy(loudnessMaxBoostDb = v) }
+                        },
+                        valueRange = 0f..24f,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Show loudness chips",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(
+                            checked = settings.showLoudnessChips,
+                            onCheckedChange = { on ->
+                                state.updateSettings { s -> s.copy(showLoudnessChips = on) }
+                            },
+                        )
+                    }
+                }
 
                 HorizontalDivider()
 
