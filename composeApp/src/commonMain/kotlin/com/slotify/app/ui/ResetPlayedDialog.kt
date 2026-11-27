@@ -18,7 +18,8 @@ fun ResetPlayedDialog(
         text = {
             Text(
                 text = "Reset clears the played marks so any song can repeat. " +
-                    "“Just play this” plays the picked song and keeps everything marked.",
+                    "“Just play this” plays the picked song, keeps marks, " +
+                    "and won’t ask again this session.",
                 style = MaterialTheme.typography.bodyMedium,
             )
         },

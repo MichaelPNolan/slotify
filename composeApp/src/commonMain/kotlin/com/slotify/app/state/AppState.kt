@@ -69,6 +69,7 @@ import com.slotify.app.youtube.YoutubeSource
 import com.slotify.app.youtube.createYoutubeSource
 import com.slotify.app.youtube.preferredDownloadBaseName
 import com.slotify.app.youtube.searchUntilScore
+import com.slotify.app.youtube.youtubeStatusClearableWhenIdle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -802,6 +803,11 @@ class AppState(
                 }
             } catch (e: CancellationException) {
                 _youtubeStatus.value = "Batch stopped"
+                // Don't leave “Batch stuck” forever — Find must accept manual downloads.
+                kotlinx.coroutines.delay(4_000)
+                if (_youtubeStatus.value == "Batch stopped") {
+                    _youtubeStatus.value = null
+                }
                 throw e
             } finally {
                 _youtubeBatchRunning.value = false
@@ -943,15 +949,9 @@ class AppState(
     /** Clear a finished YouTube status so the Find dialog can start another fetch. */
     fun clearYoutubeStatusIfIdle() {
         val s = _youtubeStatus.value ?: return
-        // Failures stay until the next search — user needs time to read them.
-        if (s.contains("failed", ignoreCase = true) || s.contains("HTTP", ignoreCase = true)) {
-            return
+        if (youtubeStatusClearableWhenIdle(s)) {
+            _youtubeStatus.value = null
         }
-        val busy = s.contains("Download") || s.contains("Index") ||
-            s.contains("Starting") || s.contains("Updating") ||
-            s.contains("Searching") || s.contains("Batch") ||
-            s.contains("download") || s.contains("searching")
-        if (!busy) _youtubeStatus.value = null
     }
 
     // ── Spotify ──────────────────────────────────────────────────────
@@ -2689,6 +2689,12 @@ class AppState(
     /** Non-null → show the reset-played dialog before starting this pick. */
     val pendingResetPick: StateFlow<PickAction?> = _pendingResetPick.asStateFlow()
 
+    /**
+     * Set by “Just play this” — stop asking for the rest of the session.
+     * Cleared only by an explicit “Reset all played” (or a pass that clears the set).
+     */
+    private var resetAskSuppressed = false
+
     /** Playlist row pick — asks only when this row's file already played (S6). */
     fun requestPlaylistPick(playlistId: String, fromRowIndex: Int) {
         val sameRow = _nowPlaying.value != null &&
@@ -2700,7 +2706,7 @@ class AppState(
         }
         val file = _playlists.value.find { it.id == playlistId }
             ?.resolvedTracks?.getOrNull(fromRowIndex)?.match?.local?.filePath
-        if (file == null || file !in _playedKeys.value) {
+        if (!shouldAskResetPlayed(file, _playedKeys.value, resetAskSuppressed)) {
             playPlaylist(playlistId, fromRowIndex)
             return
         }
@@ -2715,7 +2721,7 @@ class AppState(
             _nowPlaying.value != null &&
             queue.getOrNull(queueIndex)?.trackKey == queueKey
         // playedKeys holds plain file paths — compare the path, not the queue key.
-        if (track.filePath !in _playedKeys.value || sameRow) {
+        if (sameRow || !shouldAskResetPlayed(track.filePath, _playedKeys.value, resetAskSuppressed)) {
             playLibrary(tracks, index)
             return
         }
@@ -2726,7 +2732,13 @@ class AppState(
     fun resolvePendingResetPick(reset: Boolean) {
         val action = _pendingResetPick.value ?: return
         _pendingResetPick.value = null
-        if (reset) _playedKeys.value = emptySet()
+        if (reset) {
+            _playedKeys.value = emptySet()
+            resetAskSuppressed = false
+        } else {
+            // “Just play this” — do not nag again this session.
+            resetAskSuppressed = true
+        }
         when (action) {
             is PickAction.Playlist -> playPlaylist(action.playlistId, action.fromRowIndex)
             is PickAction.Library -> playLibrary(action.tracks, action.index)

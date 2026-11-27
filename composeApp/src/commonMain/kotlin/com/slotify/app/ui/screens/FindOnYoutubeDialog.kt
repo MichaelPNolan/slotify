@@ -230,15 +230,9 @@ fun FindOnYoutubeDialog(
                         .heightIn(max = 280.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    // Block only while a download/index is in flight — failures
-                    // leave status set so the error stays visible, but must not
-                    // disable every result forever.
-                    val statusNow = status
-                    val busy = statusNow != null &&
-                        !statusNow.contains("failed", ignoreCase = true) &&
-                        !statusNow.startsWith("Done") &&
-                        !statusNow.startsWith("Saved") &&
-                        !statusNow.startsWith("HTTP")
+                    // Block only while a download/index is in flight. Terminal batch
+                    // lines (“Batch stopped”) must not grey out every result forever.
+                    val busy = com.slotify.app.youtube.youtubeStatusBlocksDownload(status)
                     items(results, key = { it.result.videoId }) { scored ->
                         HorizontalDivider()
                         ResultRow(
