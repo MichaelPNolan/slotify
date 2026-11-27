@@ -634,6 +634,8 @@ private fun MatchedRow(
             track = loudness,
             meanLufs = state.playlistMeanLufs(playlistId),
             maxBoostDb = settings.loudnessMaxBoostDb,
+            balanceEnabled = settings.loudnessBalance,
+            isPlaying = playerSnap.isPlaying,
             onDismiss = { showLoudnessSheet = false },
             onMode = { mode, gain, limitThreshold ->
                 state.loudnessStore.setCorrection(
@@ -642,6 +644,14 @@ private fun MatchedRow(
                     gain,
                     customLimitThresholdDb = limitThreshold,
                 )
+                // Immediate live apply for the track under the cursor (not only
+                // the next playAt) — slider feedback while this song is loaded.
+                if (nowPlaying?.path == localPath ||
+                    com.slotify.app.data.resolveSymlinkTarget(nowPlaying?.path ?: "") ==
+                    localPath
+                ) {
+                    state.refreshLoudnessForCurrentTrack()
+                }
             },
         )
     }
@@ -859,14 +869,30 @@ private fun LoudnessDetailDialog(
     track: TrackLoudness,
     meanLufs: Double?,
     maxBoostDb: Float,
+    balanceEnabled: Boolean,
+    isPlaying: Boolean,
     onDismiss: () -> Unit,
     onMode: (CorrectionMode, Double, Double) -> Unit,
 ) {
+    // Local drag state so the slider tracks the finger; store + audio update every tick.
+    var gain by androidx.compose.runtime.remember(track.correction) {
+        androidx.compose.runtime.mutableFloatStateOf(track.customGainDb.toFloat())
+    }
+    var thr by androidx.compose.runtime.remember(track.correction) {
+        androidx.compose.runtime.mutableFloatStateOf(track.customLimitThresholdDb.toFloat())
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Loudness") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!balanceEnabled) {
+                    Text(
+                        text = "Loudness balance is off in Settings — corrections will not play.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 Text(
                     text = "Chip ${track.chip0_99}/99 · " +
                         "${"%.1f".format(track.integratedLufs)} LUFS",
@@ -893,7 +919,7 @@ private fun LoudnessDetailDialog(
                         RadioButton(
                             selected = track.correction == mode,
                             onClick = {
-                                onMode(mode, track.customGainDb, track.customLimitThresholdDb)
+                                onMode(mode, gain.toDouble(), thr.toDouble())
                             },
                         )
                         Text(modeLabel(mode))
@@ -901,30 +927,32 @@ private fun LoudnessDetailDialog(
                 }
                 if (track.correction == CorrectionMode.CUSTOM) {
                     Text(
-                        text = "Custom gain: ${"%+.1f".format(track.customGainDb)} dB",
+                        text = "Custom gain: ${"%+.1f".format(gain)} dB" +
+                            if (!isPlaying) " — press play to hear changes" else "",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Slider(
-                        value = track.customGainDb.toFloat(),
+                        value = gain,
                         onValueChange = { v ->
-                            onMode(CorrectionMode.CUSTOM, v.toDouble(), track.customLimitThresholdDb)
+                            gain = v
+                            onMode(CorrectionMode.CUSTOM, v.toDouble(), thr.toDouble())
                         },
                         valueRange = -12f..24f,
                     )
-                    val thr = track.customLimitThresholdDb
                     Text(
-                        text = if (thr <= -0.05) {
+                        text = if (thr <= -0.05f) {
                             "Limit starts at ${"%.1f".format(thr)} dBFS " +
-                                "(${fmtAbs(thr)} dB below max)"
+                                "(${fmtAbs(thr.toDouble())} dB below max)"
                         } else {
                             "Limit starts at max volume (0 dBFS)"
                         },
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Slider(
-                        value = thr.toFloat(),
+                        value = thr,
                         onValueChange = { v ->
-                            onMode(CorrectionMode.CUSTOM, track.customGainDb, v.toDouble())
+                            thr = v
+                            onMode(CorrectionMode.CUSTOM, gain.toDouble(), v.toDouble())
                         },
                         valueRange = -24f..0f,
                     )

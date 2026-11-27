@@ -3226,6 +3226,12 @@ class AppState(
         _loudnessBar.value = LoudnessBar(boostDb = boost, limiting = limiting)
     }
 
+    /** Re-read store + push correction to the player for the current path (live sliders). */
+    fun refreshLoudnessForCurrentTrack() {
+        val path = _nowPlaying.value?.path ?: return
+        applyLoudnessToPlayer(path)
+    }
+
     /**
      * Update app volume 0..1. Set [persist] only when a gesture finishes
      * (slider drag) so we don't write settings.json on every frame.

@@ -33,6 +33,8 @@ class AndroidAudioPlayer : AudioPlayer {
     private var pendingLimiter = false
     private var pendingLimiterThresholdDb = 0f
     private var dynamics: DynamicsProcessing? = null
+    /** Limiter stage currently present on [dynamics] — topology change → recreate. */
+    private var dynamicsLimiterOn = false
 
     private val _snapshot = MutableStateFlow(PlayerSnapshot())
     override val snapshot: StateFlow<PlayerSnapshot> = _snapshot.asStateFlow()
@@ -144,63 +146,96 @@ class AndroidAudioPlayer : AudioPlayer {
         pendingBoostDb = boostDb
         pendingLimiter = enableLimiter
         pendingLimiterThresholdDb = limiterThresholdDb.coerceIn(-24f, 0f)
-        if (player.audioSessionId > 0) applyDynamics()
+        // Live path: update the existing effect in place (slider feedback).
+        applyDynamics()
     }
 
     private fun clearDynamics() {
         runCatching { dynamics?.release() }
         dynamics = null
+        dynamicsLimiterOn = false
     }
 
-    /** Makeup boost + optional limiter on this MediaPlayer's session (API 28+). */
+    private fun needsDynamics(): Boolean =
+        pendingLimiter || pendingBoostDb > 0.01f || pendingBoostDb < -0.01f
+
+    private fun buildLimiter(): DynamicsProcessing.Limiter =
+        DynamicsProcessing.Limiter(
+            true,    // enabled
+            true,    // in use
+            0,       // link group
+            pendingLimiterThresholdDb,
+            5f,      // attack ms
+            50f,     // release ms
+            1.5f,    // ratio 1.5:1
+            -3f,     // post gain — 3 dB reduction
+        )
+
+    /**
+     * Ensure the session has a DynamicsProcessing insert effect matching
+     * [pendingBoostDb] / [pendingLimiter]. Prefer **in-place** parameter
+     * updates so Custom sliders change audio in real time without tearing
+     * down the effect (recreate only when the limiter stage toggles).
+     */
     private fun applyDynamics() {
         if (android.os.Build.VERSION.SDK_INT < 28) return
-        clearDynamics()
-        val needs = pendingBoostDb > 0.01f || pendingLimiter
-        if (!needs) return
+        if (!needsDynamics()) {
+            clearDynamics()
+            return
+        }
+        val existing = dynamics
+        if (existing != null) {
+            val ok = runCatching {
+                // Topology mismatch (limiter stage added/removed) → full recreate.
+                if (pendingLimiter != dynamicsLimiterOn) return@runCatching false
+                existing.setInputGainAllChannelsTo(pendingBoostDb.coerceIn(-24f, 24f))
+                if (pendingLimiter) {
+                    existing.setLimiterAllChannelsTo(buildLimiter())
+                }
+                existing.setEnabled(true)
+                true
+            }.getOrDefault(false)
+            if (ok) return
+            clearDynamics()
+        }
+        createDynamics()
+    }
+
+    private fun createDynamics() {
         val sid = runCatching { player.audioSessionId }.getOrNull() ?: return
         if (sid <= 0) return
-        runCatching {
-            val cfg = DynamicsProcessing.Config.Builder(
-                DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION,
-                2,   // channels (stereo decode path)
-                false, 0, // preEq off
-                false, 0, // mbc off
-                false, 0, // postEq off
-                pendingLimiter, // limiter
-            ).build()
-            val dpp = DynamicsProcessing(
-                DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION,
-                sid,
-                cfg,
-            )
-            dpp.setInputGainAllChannelsTo(pendingBoostDb.coerceIn(-24f, 24f))
-            if (pendingLimiter) {
-                // Gentle loudness control: −3 dB post trim, 1.5:1 over threshold
-                // (user: “3 dB of reduction … compression ratio of 1.5:1”).
-                val limiter = DynamicsProcessing.Limiter(
-                    true,    // enabled
-                    true,    // in use
-                    0,       // link group
-                    pendingLimiterThresholdDb, // start cutting at/below full scale
-                    5f,      // attack ms
-                    50f,     // release ms
-                    1.5f,    // ratio 1.5:1
-                    -3f,     // post gain — 3 dB reduction (parameter exists)
+        // Stereo config first (almost all library files); retry mono if needed.
+        for (ch in intArrayOf(2, 1)) {
+            val ok = runCatching {
+                val cfg = DynamicsProcessing.Config.Builder(
+                    DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION,
+                    ch,
+                    false, 0, // preEq off
+                    false, 0, // mbc off
+                    false, 0, // postEq off
+                    pendingLimiter,
+                ).build()
+                val dpp = DynamicsProcessing(
+                    DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION,
+                    sid,
+                    cfg,
                 )
-                dpp.setLimiterAllChannelsTo(limiter)
-            }
-            // AudioEffect instances start disabled — without this the limiter never runs.
-            val st = dpp.setEnabled(true)
-            if (st != AudioEffect.SUCCESS) {
-                dpp.release()
-                dynamics = null
-                return
-            }
-            dynamics = dpp
-        }.onFailure {
-            dynamics = null
+                dpp.setInputGainAllChannelsTo(pendingBoostDb.coerceIn(-24f, 24f))
+                if (pendingLimiter) {
+                    dpp.setLimiterAllChannelsTo(buildLimiter())
+                }
+                if (dpp.setEnabled(true) != AudioEffect.SUCCESS) {
+                    dpp.release()
+                    return@runCatching false
+                }
+                dynamics = dpp
+                dynamicsLimiterOn = pendingLimiter
+                true
+            }.getOrDefault(false)
+            if (ok) return
         }
+        dynamics = null
+        dynamicsLimiterOn = false
     }
 
     override fun stop() {
