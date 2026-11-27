@@ -612,10 +612,14 @@ private fun MatchedRow(
     // Also true when a Slotify symlink resolves back to a library file.
     val isExistingLibrary = !underSlotify && relPath != null
 
-    val loudness = if (settings.showLoudnessChips && supportsLoudnessBalance()) {
-        state.loudnessStore.track(localPath)
-    } else {
-        null
+    // Re-read chips when a backfill write bumps the store revision.
+    val loudnessRevision by state.loudnessStore.revision.collectAsState()
+    val loudness = remember(loudnessRevision, settings.showLoudnessChips, localPath) {
+        if (settings.showLoudnessChips && supportsLoudnessBalance()) {
+            state.loudnessStore.track(localPath)
+        } else {
+            null
+        }
     }
     var showLoudnessSheet by remember { mutableStateOf(false) }
     if (showLoudnessSheet && loudness != null) {

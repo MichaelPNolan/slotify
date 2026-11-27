@@ -1,11 +1,22 @@
 package com.slotify.app.loudness
 
 import com.slotify.app.data.AppFiles
+import com.slotify.app.data.resolveSymlinkTarget
 import com.slotify.app.platform.nowEpochMs
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 const val LOUDNESS_FILE = "loudness.json"
+
+/**
+ * One key for write (backfill/download) and read (chip UI / play):
+ * resolve symlinks the same way the playlist row does, so a match that points
+ * at a Slotify link and the library file it targets share one entry.
+ */
+fun loudnessKey(path: String): String = resolveSymlinkTarget(path).replace('\\', '/')
 
 @Serializable
 enum class CorrectionMode { RECOMMENDED, BYPASS, CUSTOM }
@@ -44,16 +55,28 @@ class LoudnessStore(
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private var doc: LoudnessDocument? = null
 
+    private val _revision = MutableStateFlow(0)
+    /** Bumped on every track write so Compose rows re-read chips after analysis. */
+    val revision: StateFlow<Int> = _revision.asStateFlow()
+
+    private fun bumpRevision() {
+        _revision.value = _revision.value + 1
+    }
+
     fun load(): LoudnessDocument {
         doc?.let { return it }
         val parsed = read()?.let { text ->
             runCatching { json.decodeFromString<LoudnessDocument>(text) }.getOrNull()
         } ?: LoudnessDocument()
-        doc = parsed
-        return parsed
+        // Re-key legacy raw paths (e.g. symlink rows stored before loudnessKey).
+        val migrated = parsed.copy(
+            tracks = parsed.tracks.entries.associate { (k, v) -> loudnessKey(k) to v },
+        )
+        doc = migrated
+        return migrated
     }
 
-    fun track(path: String): TrackLoudness? = load().tracks[path]
+    fun track(path: String): TrackLoudness? = load().tracks[loudnessKey(path)]
 
     fun putTrack(path: String, result: LoudnessResult) {
         val d = load()
@@ -64,18 +87,21 @@ class LoudnessStore(
             chip0_99 = loudnessChip(result.integratedLufs),
             analysedAt = now(),
         )
-        doc = d.copy(tracks = d.tracks + (path to entry))
+        doc = d.copy(tracks = d.tracks + (loudnessKey(path) to entry))
         persist()
+        bumpRevision()
     }
 
     fun setCorrection(path: String, mode: CorrectionMode, customGainDb: Double) {
         val d = load()
-        val cur = d.tracks[path] ?: return
-        doc = d.copy(tracks = d.tracks + (path to cur.copy(
+        val key = loudnessKey(path)
+        val cur = d.tracks[key] ?: return
+        doc = d.copy(tracks = d.tracks + (key to cur.copy(
             correction = mode,
             customGainDb = customGainDb,
         )))
         persist()
+        bumpRevision()
     }
 
     fun playlist(id: String): PlaylistLoudnessProfile? = load().playlists[id]

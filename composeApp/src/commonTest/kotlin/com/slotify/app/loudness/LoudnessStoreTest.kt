@@ -1,7 +1,10 @@
 package com.slotify.app.loudness
 
+import java.nio.file.Files
+import java.nio.file.Paths
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class LoudnessStoreTest {
@@ -52,5 +55,29 @@ class LoudnessStoreTest {
         val store = LoudnessStore(read = { "{not json" }, write = {}, now = { 0 })
         assertEquals(0, store.load().tracks.size)
         assertNull(store.track("/a"))
+    }
+
+    /**
+     * Chip UI reads resolveSymlinkTarget(path); backfill writes match.local.filePath.
+     * If those differ (symlink row), analysis under the link path must still hit the chip.
+     */
+    @Test
+    fun symlinkPathAndResolvedTargetShareOneKey() {
+        val mem = mutableListOf<String>()
+        val store = storeOn(mem)
+        val dir = Files.createTempDirectory("loudness-symlink")
+        val target = dir.resolve("real.opus")
+        val link = dir.resolve("link.opus")
+        Files.write(target, byteArrayOf(1, 2, 3))
+        Files.createSymbolicLink(link, target)
+        try {
+            store.putTrack(link.toString(), LoudnessResult(-16.0, 3.0, -1.0))
+            assertNotNull(store.track(link.toString()), "link key miss")
+            assertNotNull(store.track(target.toString()), "resolved target key miss")
+        } finally {
+            Files.deleteIfExists(link)
+            Files.deleteIfExists(target)
+            Files.deleteIfExists(dir)
+        }
     }
 }
