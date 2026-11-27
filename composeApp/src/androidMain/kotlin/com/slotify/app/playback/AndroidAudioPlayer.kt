@@ -3,6 +3,7 @@ package com.slotify.app.playback
 import android.media.MediaPlayer
 import android.media.audiofx.AudioEffect
 import android.media.audiofx.DynamicsProcessing
+import android.media.audiofx.Visualizer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,13 +29,14 @@ class AndroidAudioPlayer : AudioPlayer {
     private val player = MediaPlayer()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var pollJob: Job? = null
+    private var meterJob: Job? = null
     private var pendingPlay = true
     private var pendingBoostDb = 0f
     private var pendingLimiter = false
     private var pendingLimiterThresholdDb = 0f
     private var dynamics: DynamicsProcessing? = null
-    /** Limiter stage currently present on [dynamics] — topology change → recreate. */
     private var dynamicsLimiterOn = false
+    private var visualizer: Visualizer? = null
 
     private val _snapshot = MutableStateFlow(PlayerSnapshot())
     override val snapshot: StateFlow<PlayerSnapshot> = _snapshot.asStateFlow()
@@ -44,6 +46,10 @@ class AndroidAudioPlayer : AudioPlayer {
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     override val events: SharedFlow<PlayerEvent> = _events.asSharedFlow()
+
+    private val _reductionMeter = MutableStateFlow(0f)
+    /** 0..1 — how far the monitored peak sits above the limiter threshold. */
+    override val reductionMeter: StateFlow<Float> = _reductionMeter.asStateFlow()
 
     init {
         player.setOnPreparedListener {
@@ -60,10 +66,12 @@ class AndroidAudioPlayer : AudioPlayer {
                 _snapshot.value = _snapshot.value.copy(isPlaying = false)
             }
             applyDynamics()
+            ensureMeter()
             startPositionPolling()
         }
         player.setOnCompletionListener {
             stopPositionPolling()
+            stopMeter()
             _snapshot.value = _snapshot.value.copy(
                 isPlaying = false,
                 positionMs = _snapshot.value.durationMs,
@@ -72,6 +80,7 @@ class AndroidAudioPlayer : AudioPlayer {
         }
         player.setOnErrorListener { _, what, extra ->
             stopPositionPolling()
+            stopMeter()
             val message = "Playback failed (what=$what extra=$extra)"
             _snapshot.value = _snapshot.value.copy(isPlaying = false, error = message)
             _events.tryEmit(PlayerEvent.Failed(message))
@@ -82,19 +91,18 @@ class AndroidAudioPlayer : AudioPlayer {
     override fun load(path: String, startPaused: Boolean) {
         pendingPlay = !startPaused
         stopPositionPolling()
+        stopMeter()
         clearDynamics()
         runCatching {
             player.reset()
             when {
                 path.startsWith("content://") -> {
-                    // SAF URI (Link file when a real path was not resolvable).
                     val ctx = com.slotify.app.data.androidAppContext
                         ?: error("Android context not ready")
                     player.setDataSource(ctx, android.net.Uri.parse(path))
                 }
                 else -> player.setDataSource(path)
             }
-            // Optimistic isPlaying so the UI shows Stop/Pause while prepare runs.
             _snapshot.value = PlayerSnapshot(
                 currentPath = path,
                 isPlaying = pendingPlay,
@@ -113,8 +121,8 @@ class AndroidAudioPlayer : AudioPlayer {
             player.start()
             _snapshot.value = _snapshot.value.copy(isPlaying = true)
             startPositionPolling()
+            ensureMeter()
         }.onFailure {
-            // Still preparing — onPrepared will start() because pendingPlay is set.
             _snapshot.value = _snapshot.value.copy(isPlaying = true)
         }
     }
@@ -124,6 +132,7 @@ class AndroidAudioPlayer : AudioPlayer {
         runCatching { player.pause() }
         _snapshot.value = _snapshot.value.copy(isPlaying = false)
         stopPositionPolling()
+        stopMeter()
     }
 
     override fun seekTo(positionMs: Long) {
@@ -146,8 +155,12 @@ class AndroidAudioPlayer : AudioPlayer {
         pendingBoostDb = boostDb
         pendingLimiter = enableLimiter
         pendingLimiterThresholdDb = limiterThresholdDb.coerceIn(-24f, 0f)
-        // Live path: update the existing effect in place (slider feedback).
         applyDynamics()
+        if (pendingLimiter && _snapshot.value.isPlaying) {
+            ensureMeter()
+        } else if (!pendingLimiter) {
+            stopMeter()
+        }
     }
 
     private fun clearDynamics() {
@@ -161,22 +174,16 @@ class AndroidAudioPlayer : AudioPlayer {
 
     private fun buildLimiter(): DynamicsProcessing.Limiter =
         DynamicsProcessing.Limiter(
-            true,    // enabled
-            true,    // in use
-            0,       // link group
+            true,
+            true,
+            0,
             pendingLimiterThresholdDb,
-            5f,      // attack ms
-            50f,     // release ms
-            1.5f,    // ratio 1.5:1
-            -3f,     // post gain — 3 dB reduction
+            5f,
+            50f,
+            1.5f,
+            -3f,
         )
 
-    /**
-     * Ensure the session has a DynamicsProcessing insert effect matching
-     * [pendingBoostDb] / [pendingLimiter]. Prefer **in-place** parameter
-     * updates so Custom sliders change audio in real time without tearing
-     * down the effect (recreate only when the limiter stage toggles).
-     */
     private fun applyDynamics() {
         if (android.os.Build.VERSION.SDK_INT < 28) return
         if (!needsDynamics()) {
@@ -186,7 +193,6 @@ class AndroidAudioPlayer : AudioPlayer {
         val existing = dynamics
         if (existing != null) {
             val ok = runCatching {
-                // Topology mismatch (limiter stage added/removed) → full recreate.
                 if (pendingLimiter != dynamicsLimiterOn) return@runCatching false
                 existing.setInputGainAllChannelsTo(pendingBoostDb.coerceIn(-24f, 24f))
                 if (pendingLimiter) {
@@ -204,15 +210,14 @@ class AndroidAudioPlayer : AudioPlayer {
     private fun createDynamics() {
         val sid = runCatching { player.audioSessionId }.getOrNull() ?: return
         if (sid <= 0) return
-        // Stereo config first (almost all library files); retry mono if needed.
         for (ch in intArrayOf(2, 1)) {
             val ok = runCatching {
                 val cfg = DynamicsProcessing.Config.Builder(
                     DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION,
                     ch,
-                    false, 0, // preEq off
-                    false, 0, // mbc off
-                    false, 0, // postEq off
+                    false, 0,
+                    false, 0,
+                    false, 0,
                     pendingLimiter,
                 ).build()
                 val dpp = DynamicsProcessing(
@@ -238,8 +243,53 @@ class AndroidAudioPlayer : AudioPlayer {
         dynamicsLimiterOn = false
     }
 
+    // ── Reduction meter (Visualizer peak vs limiter threshold) ────────
+
+    private fun ensureMeter() {
+        if (!pendingLimiter) return
+        if (meterJob?.isActive == true) return
+        val sid = runCatching { player.audioSessionId }.getOrNull() ?: return
+        if (sid <= 0) return
+        runCatching {
+            val v = Visualizer(sid)
+            v.setMeasurementMode(Visualizer.MEASUREMENT_MODE_PEAK_RMS)
+            v.setEnabled(true)
+            visualizer = v
+        }.onFailure {
+            visualizer = null
+            _reductionMeter.value = 0f
+            return
+        }
+        val v = visualizer ?: return
+        meterJob = scope.launch {
+            val m = Visualizer.MeasurementPeakRms()
+            while (true) {
+                delay(50)
+                val code = runCatching { v.getMeasurementPeakRms(m) }.getOrDefault(-1)
+                if (code != Visualizer.SUCCESS) continue
+                val peakDb = m.mPeak / 1000f
+                if (!pendingLimiter) {
+                    _reductionMeter.value = 0f
+                    continue
+                }
+                val over = peakDb - pendingLimiterThresholdDb
+                _reductionMeter.value =
+                    if (over <= 0f) 0f else (over / 12f).coerceIn(0f, 1f)
+            }
+        }
+    }
+
+    private fun stopMeter() {
+        meterJob?.cancel()
+        meterJob = null
+        runCatching { visualizer?.release() }
+        visualizer = null
+        _reductionMeter.value = 0f
+    }
+
     override fun stop() {
         stopPositionPolling()
+        stopMeter()
         clearDynamics()
         runCatching {
             player.stop()
@@ -250,6 +300,7 @@ class AndroidAudioPlayer : AudioPlayer {
 
     override fun release() {
         stopPositionPolling()
+        stopMeter()
         clearDynamics()
         runCatching { player.release() }
         _snapshot.value = PlayerSnapshot()

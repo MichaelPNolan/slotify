@@ -58,6 +58,12 @@ interface AudioPlayer {
         limiterThresholdDb: Float = 0f,
     ) {}
 
+    /**
+     * Live reduction meter 0f..1f for the volume-row bar (Android Visualizer
+     * peak vs limiter threshold). Desktop stays 0f.
+     */
+    val reductionMeter: StateFlow<Float>
+
     fun stop()
 
     /** Free native resources. The player is unusable afterwards. */

@@ -32,6 +32,10 @@ class VlcAudioPlayer : AudioPlayer {
     )
     override val events: SharedFlow<PlayerEvent> = _events.asSharedFlow()
 
+    /** Desktop has no DynamicsProcessing meter — always idle. */
+    private val _reductionMeter = MutableStateFlow(0f)
+    override val reductionMeter: StateFlow<Float> = _reductionMeter.asStateFlow()
+
     init {
         player.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
             override fun playing(mp: MediaPlayer) {

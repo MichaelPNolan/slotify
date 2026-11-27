@@ -1,8 +1,13 @@
 package com.slotify.app.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
@@ -19,18 +24,17 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.slotify.app.loudness.supportsLoudnessBalance
 import com.slotify.app.state.AppState
 import com.slotify.app.state.showLoudnessAnalyseButton
 
 /**
- * Always-visible volume control, shown on every tab (bottom bar, above the
- * navigation row) — including when nothing is playing.
- * Icon click toggles mute; the slider sets app output volume live and
- * persists when the drag finishes. Right of the (half-width) slider:
- * - Song **playing** → loudness remedy (Neutral / Boost / Limiting).
- * - **Paused / not playing** → “Analyse loudness” (or Stop while running).
+ * Always-visible volume control (every tab). Right of the half-width slider:
+ * - Playing → loudness remedy text with a live “reduction” bar behind it
+ *   (Android Visualizer peak vs limiter threshold; 0 when idle).
+ * - Paused → Analyse loudness / Stop analysis.
  */
 @Composable
 fun VolumeControl(state: AppState) {
@@ -39,6 +43,7 @@ fun VolumeControl(state: AppState) {
     val playerSnap by state.player.snapshot.collectAsState()
     val activePlaylistId by state.activePlaylistId.collectAsState()
     val loudnessStatus by state.loudnessStatus.collectAsState()
+    val reduction by state.player.reductionMeter.collectAsState()
 
     val analysisRunning = loudnessStatus != null &&
         !loudnessStatus!!.startsWith("Loudness done") &&
@@ -71,7 +76,6 @@ fun VolumeControl(state: AppState) {
             )
         }
         Spacer(Modifier.width(4.dp))
-        // Half of the remaining row; status / analyse button takes the other half.
         Slider(
             value = volume,
             onValueChange = { state.setVolume(it, persist = false) },
@@ -91,9 +95,7 @@ fun VolumeControl(state: AppState) {
                     if (analysisRunning) state.cancelLoudnessBackfill()
                     else state.startLoudnessBackfill(id)
                 },
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 0.dp),
+                modifier = Modifier.weight(1f),
             ) {
                 Text(
                     text = if (analysisRunning) "Stop analysis" else "Analyse loudness",
@@ -102,19 +104,42 @@ fun VolumeControl(state: AppState) {
                 )
             }
         } else {
-            Text(
-                text = loudness.label,
-                style = MaterialTheme.typography.labelMedium,
-                color = when {
-                    loudness.boostDb > 0.05f -> MaterialTheme.colorScheme.tertiary
-                    loudness.limiting -> MaterialTheme.colorScheme.secondary
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                },
+            val labelColor = when {
+                loudness.boostDb > 0.05f -> MaterialTheme.colorScheme.tertiary
+                loudness.limiting -> MaterialTheme.colorScheme.secondary
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            // Bar height tracks live reduction (0..1); text sits on top.
+            Box(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 4.dp),
-                maxLines = 1,
-            )
+                    .padding(start = 4.dp)
+                    .height(32.dp)
+                    .clip(MaterialTheme.shapes.small)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                if (reduction > 0.01f && loudness.limiting) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .fillMaxHeight(fraction = reduction.coerceIn(0.08f, 1f))
+                            .background(
+                                MaterialTheme.colorScheme.secondary.copy(
+                                    alpha = 0.40f + 0.45f * reduction,
+                                ),
+                            ),
+                    )
+                }
+                Text(
+                    text = loudness.label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = labelColor,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
+            }
         }
     }
 }

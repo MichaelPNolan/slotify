@@ -218,5 +218,11 @@ class MainActivity : ComponentActivity() {
         if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
             permissionLauncher.launch(permission)
         }
+        // Visualizer metering for the loudness limiter bar (playback session).
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
     }
 }
