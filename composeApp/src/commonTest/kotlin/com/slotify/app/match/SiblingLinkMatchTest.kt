@@ -78,6 +78,48 @@ class SiblingLinkMatchTest {
         assertNotNull(conf)
     }
 
+    @Test
+    fun thaiYoutubeTitleArtistFilenameMatches() {
+        // parseFilename assumes Artist - Title; YT Thai files are Title - Artist.
+        // Spotify artist may be Latin while the file uses Thai script.
+        val conf = Matcher.siblingMatchConfidence(
+            remote = remote("สิเทน้อง ให้บอกแน", "Tai Orathai"),
+            local = local(
+                title = null,
+                artist = null,
+                path = "/sdcard/Music/สิเทน้อง ให้บอกแน - ต่าย อรทัย 【LYRIC VIDEO】.opus",
+            ),
+        )
+        assertNotNull(conf, "raw basename must carry title evidence for Thai YT names")
+        assertTrue(conf >= Matcher.SIBLING_THRESHOLD)
+    }
+
+    @Test
+    fun rawFilenameTitleBoostsMatchConfidence() {
+        val score = Matcher.matchConfidence(
+            remote = remote("หยุดเวลาไว้ตรงนี้ได้บ่", "Tai Orathai"),
+            local = local(
+                title = "ต่าย อรทัย 【LYRIC VIDEO】", // swapped parse fallback
+                artist = "Suae music 53",
+                path = "/sdcard/Music/Suae music 53 - หยุดเวลาไว้ตรงนี้ได้บ่ - ต่าย อรทัย [เนื้อเพลง].opus",
+            ),
+        )
+        assertTrue(score >= Matcher.DEFAULT_THRESHOLD, "got $score")
+    }
+
+    @Test
+    fun wrongSongSameFolderStillRejected() {
+        val conf = Matcher.siblingMatchConfidence(
+            remote = remote("สิเทน้อง ให้บอกแน", "Tai Orathai"),
+            local = local(
+                title = null,
+                artist = null,
+                path = "/sdcard/Music/เขียนฝันไว้ข้างฝา - รัชนก ศรีโลพันธุ์.opus",
+            ),
+        )
+        assertNull(conf, "unrelated Thai title must not sibling-match")
+    }
+
     // ── assignSiblingLinks ───────────────────────────────────────────
 
     @Test

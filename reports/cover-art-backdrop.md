@@ -3,8 +3,6 @@ feature: cover-art-backdrop
 status: delivered
 specs:
   - specs/2026-11-23-cover-art-backdrop-design.md
-plans:
-  - plans/2026-11-23-cover-art-backdrop.md
 branch: 0.1.1
 commits: b22daed..1c508d9
 ---
@@ -108,4 +106,3 @@ Verification checklist (manual, spec `[S8]`):
 | File | Role | Notes |
 |------|------|-------|
 | `specs/2026-11-23-cover-art-backdrop-design.md` | Design (amended once with verified extraction facts) | See §S4 for the opus/jaudiotagger constraint |
-| `plans/2026-11-23-cover-art-backdrop.md` | Implementation plan (7 tasks, TDD) | Two code fixes synced back during execution (vendor-first, tween import) |

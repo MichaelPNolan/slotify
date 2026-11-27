@@ -69,6 +69,8 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
     val settings by state.settings.collectAsState()
     val youtubeStatus by state.youtubeStatus.collectAsState()
     val batchRunning by state.youtubeBatchRunning.collectAsState()
+    val linkFillStatus by state.linkFillStatus.collectAsState()
+    val linkFillRunning by state.linkFillRunning.collectAsState()
     var findTarget by remember { mutableStateOf<RemoteTrack?>(null) }
     var linkTarget by remember { mutableStateOf<RemoteTrack?>(null) }
     var filter by rememberSaveable(playlistId) { mutableStateOf("") }
@@ -235,6 +237,22 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
                     if (batchRunning) {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
+                }
+            }
+            // Link-file cascade (this playlist only) — same blue/error line as YT batch.
+            linkFillStatus?.let { s ->
+                Text(
+                    text = s,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (s.startsWith("Link fill failed")) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+                if (linkFillRunning) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
             }
         }

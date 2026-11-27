@@ -249,6 +249,17 @@ class AppState(
     /** YouTube fetch progress (download %, indexing…) for the Find dialog. */
     val youtubeStatus: StateFlow<String?> = _youtubeStatus.asStateFlow()
 
+    private val _linkFillStatus = MutableStateFlow<String?>(null)
+    /**
+     * Progress for Link-file cascade (same playlist only): blue line under the
+     * batch bar on Playlist detail — same style as [youtubeStatus].
+     * Prefix `Link fill failed` → error color.
+     */
+    val linkFillStatus: StateFlow<String?> = _linkFillStatus.asStateFlow()
+
+    private val _linkFillRunning = MutableStateFlow(false)
+    val linkFillRunning: StateFlow<Boolean> = _linkFillRunning.asStateFlow()
+
     private val _youtubeBatchRunning = MutableStateFlow(false)
     /** True while [batchFetchYoutube] is walking a playlist. */
     val youtubeBatchRunning: StateFlow<Boolean> = _youtubeBatchRunning.asStateFlow()
@@ -2266,15 +2277,24 @@ class AppState(
                 quarantine.remove(local.filePath)
                 withContext(Dispatchers.IO) { repository.saveQuarantine(quarantine.all) }
             }
-            val siblingPins = autoLinkSiblingsFromDirectory(playlistId, local.filePath)
-            matchPlaylist(playlistId)
-            emit(
-                when {
+            // Immediate feedback — do not wait on folder tag reads / rematch.
+            emit("Linked to ${local.displayTitle}")
+            _linkFillRunning.value = true
+            try {
+                _linkFillStatus.value = "Matching other rows in this playlist…"
+                val siblingPins = autoLinkSiblingsFromDirectory(playlistId, local.filePath)
+                _linkFillStatus.value = "Refreshing matches…"
+                matchPlaylist(playlistId)
+                _linkFillStatus.value = when {
                     siblingPins > 0 ->
-                        "Linked to ${local.displayTitle} · +$siblingPins nearby track(s)"
-                    else -> "Linked to ${local.displayTitle}"
-                },
-            )
+                        "Linked · +$siblingPins nearby track(s) in this playlist"
+                    else -> "Linked · no extra matches in that folder"
+                }
+            } catch (e: Throwable) {
+                _linkFillStatus.value = "Link fill failed: ${e.message ?: e::class.simpleName}"
+            } finally {
+                _linkFillRunning.value = false
+            }
         }
     }
 
@@ -2289,11 +2309,15 @@ class AppState(
      * - exclusive: one file → one track, one track → one file
      * - dual-axis gate in [Matcher.siblingMatchConfidence] (title words + artist)
      *
+     * Progress → [linkFillStatus] (playlist detail, blue/error line).
      * Returns how many extra pins were added (0 when the path has no usable
      * directory, e.g. Android `content://` URIs).
      */
     private suspend fun autoLinkSiblingsFromDirectory(playlistId: String, linkedPath: String): Int {
-        if (linkedPath.startsWith("content://")) return 0
+        if (linkedPath.startsWith("content://")) {
+            _linkFillStatus.value = "Linked · SAF path has no sibling folder"
+            return 0
+        }
         val dir = java.io.File(linkedPath).parentFile ?: return 0
         if (!dir.isDirectory) return 0
 
@@ -2308,7 +2332,10 @@ class AppState(
                 row.match == null && key !in held && key !in existingPins
             }
             .map { it.remote }
-        if (openRemotes.isEmpty()) return 0
+        if (openRemotes.isEmpty()) {
+            _linkFillStatus.value = "Linked · no open rows left in this playlist"
+            return 0
+        }
 
         val alreadyUsedPaths = buildSet {
             add(linkedPath)
@@ -2316,45 +2343,58 @@ class AppState(
             playlist.resolvedTracks.forEach { row -> row.match?.local?.filePath?.let { add(it) } }
         }
 
-        val siblingFiles = withContext(Dispatchers.IO) {
-            dir.listFiles()
-                ?.filter { f ->
-                    f.isFile &&
-                        !f.name.startsWith(".") &&
-                        f.extension.lowercase() in AUDIO_EXTENSIONS &&
-                        f.absolutePath !in alreadyUsedPaths &&
-                        f.canonicalPath !in alreadyUsedPaths &&
-                        !quarantine.contains(f.absolutePath) &&
-                        !quarantine.contains(f.canonicalPath)
-                }
-                ?.toList()
-                .orEmpty()
+        // Path → track for O(1) membership. Do **not** call canonicalPath while
+        // walking the directory: on Android FUSE each canonicalize is a syscall
+        // and /sdcard/Music has hundreds of entries (that was the “Listing…” stall).
+        val libraryByPath = HashMap<String, LocalTrack>(_library.value.size)
+        for (t in _library.value) {
+            libraryByPath[t.filePath] = t
         }
-        if (siblingFiles.isEmpty()) return 0
+        runCatching { java.io.File(linkedPath).canonicalPath }.getOrNull()?.let { canon ->
+            libraryByPath[canon]?.let { libraryByPath[linkedPath] = it }
+        }
 
-        // Index siblings that the library does not know yet (same folder as
-        // the user's explicit pick — safe to read tags for matching only).
-        var locals = _library.value
-        var libraryChanged = false
+        _linkFillStatus.value = "Listing files next to the link…"
+        val siblingFiles = withContext(Dispatchers.IO) {
+            val out = ArrayList<java.io.File>()
+            val entries = dir.listFiles() ?: return@withContext emptyList()
+            var n = 0
+            for (f in entries) {
+                n++
+                if (n % 100 == 0) {
+                    _linkFillStatus.value = "Listing files… $n (${f.name.take(30)})"
+                }
+                if (!f.isFile) continue
+                val name = f.name
+                if (name.startsWith(".")) continue
+                if (name.substringAfterLast('.', "").lowercase() !in AUDIO_EXTENSIONS) continue
+                if (f.absolutePath in alreadyUsedPaths) continue
+                if (quarantine.contains(f.absolutePath)) continue
+                out.add(f)
+            }
+            out
+        }
+        if (siblingFiles.isEmpty()) {
+            _linkFillStatus.value = "Linked · no other audio files in that folder"
+            return 0
+        }
+
+        // Filename-only match: use the indexed row when we have it, otherwise a
+        // path-only LocalTrack (basename axes). No tag reads / no library write —
+        // simple name matching does not need to demux the file.
+        val siblingLocals = ArrayList<LocalTrack>(siblingFiles.size)
         for (f in siblingFiles) {
             val path = f.absolutePath
-            if (locals.any { it.filePath == path || it.filePath == f.canonicalPath }) continue
-            val t = scanner.readTrack(path) ?: continue
-            if (locals.none { it.filePath == t.filePath }) {
-                locals = locals + t
-                libraryChanged = true
-            }
-        }
-        if (libraryChanged) {
-            _library.value = locals
-            withContext(Dispatchers.IO) { repository.saveLibrary(locals) }
+            siblingLocals.add(libraryByPath[path] ?: LocalTrack(filePath = path))
         }
 
-        val siblingLocals = siblingFiles.mapNotNull { f ->
-            locals.find { it.filePath == f.absolutePath || it.filePath == f.canonicalPath }
-        }
+        _linkFillStatus.value =
+            "Matching ${openRemotes.size} open row(s) against ${siblingLocals.size} file(s)…"
         val pins = Matcher.assignSiblingLinks(openRemotes, siblingLocals)
-        if (pins.isEmpty()) return 0
+        if (pins.isEmpty()) {
+            _linkFillStatus.value = "Linked · no confident sibling matches"
+            return 0
+        }
 
         var links = _manualLinks.value
         var added = 0

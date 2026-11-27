@@ -67,11 +67,63 @@ object Matcher {
             title = parsed.title,
             artist = parsed.artist,
         )
-        if (filenameLocal.title == local.title && filenameLocal.artist == local.artist) {
-            return tagScore
+        val filenameScore = if (
+            filenameLocal.title == local.title && filenameLocal.artist == local.artist
+        ) {
+            tagScore
+        } else {
+            scoreTitleArtistDuration(remote, filenameLocal)
         }
-        val filenameScore = scoreTitleArtistDuration(remote, filenameLocal)
-        return max(tagScore, filenameScore)
+
+        // Raw on-disk name: YouTube “Title - Artist” / Thai channels often put the
+        // real Spotify title only in the full filename (parseFilename assumes
+        // “Artist - Title” and swaps the axes).
+        val rawScore = scoreRawFilename(remote, local)
+        return maxOf(tagScore, filenameScore, rawScore)
+    }
+
+    /**
+     * Score using only the basename (no directory). Handles YT “Title - Artist”
+     * where [parseFilename] puts the Spotify title in the artist slot.
+     */
+    private fun scoreRawFilename(remote: RemoteTrack, local: LocalTrack): Double {
+        val rawBase = local.nameForFilenameParse
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .substringBeforeLast('.')
+        val nRaw = normalizeStr(rawBase)
+        val nRTitle = normalizeStr(remote.name)
+        if (nRaw.isEmpty() || nRTitle.isEmpty() || !nRaw.contains(nRTitle)) return 0.0
+
+        val rArtists = remote.artists.mapNotNull { a ->
+            normalizeStr(a.name).takeIf { it.isNotEmpty() }
+        }
+        val artistInRaw = rArtists.any { nRaw.contains(it) }
+        if (artistInRaw) return 0.95
+
+        // Parse may have swapped axes: its “artist” is actually the Spotify title.
+        val parsed = parseFilename(local.nameForFilenameParse)
+        val nParsedArtist = normalizeStr(parsed.artist)
+        if (nParsedArtist.isNotEmpty() &&
+            (nParsedArtist == nRTitle || nRTitle.contains(nParsedArtist) || nParsedArtist.contains(nRTitle))
+        ) {
+            return 0.85
+        }
+        // Tag artist agrees with Spotify (filename just omitted it).
+        val nTagArtist = normalizeStr(local.artist)
+        if (nTagArtist.isNotEmpty() && rArtists.any {
+                nTagArtist.contains(it) || it.contains(nTagArtist)
+            }
+        ) {
+            return 0.90
+        }
+        // Title is on disk but no artist axis agrees. Channel prefixes
+        // (“Suae music 53 - …”) and cross-script credits (Thai file vs Latin
+        // Spotify artist) are not song-artist contradictions — accept when the
+        // remote title is long enough to be distinctive. Short titles stay
+        // gated (e.g. “Hello” must still fail a wrong-artist pair).
+        if (nRTitle.length >= 6) return 0.78
+        return 0.0
     }
 
     private fun scoreTitleArtistDuration(remote: RemoteTrack, local: LocalTrack): Double {
@@ -280,6 +332,12 @@ object Matcher {
                 return true
             }
         }
+        // Full basename: YT “Title - Artist” / Thai names — title often only here.
+        val base = local.nameForFilenameParse
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .substringBeforeLast('.')
+        if (normalizeStr(base).contains(nRemote)) return true
         return false
     }
 
@@ -287,22 +345,56 @@ object Matcher {
      * When the local side has artist metadata (tag or filename), require a
      * reasonable artist match. Unknown local artist does not block — title
      * evidence already carries the pair (album folders often lack tags).
+     *
+     * ParseFilename assumes `Artist - Title`; YouTube Thai files are often
+     * `Title - Artist`, so the parse “artist” is the Spotify *title*. If that
+     * slot equals the remote title (swapped axes), do not treat it as a
+     * contradicting artist.
      */
     private fun siblingArtistEvidence(remote: RemoteTrack, local: LocalTrack): Boolean {
         val remoteArtists = remote.artists.mapNotNull { a ->
             normalizeStr(a.name).takeIf { it.isNotEmpty() }
         }
         if (remoteArtists.isEmpty()) return true
-        val localArtists = listOfNotNull(
-            local.artist?.takeIf { it.isNotBlank() }?.let { normalizeStr(it) },
-            parseFilename(local.nameForFilenameParse).artist?.let { normalizeStr(it) },
-        ).filter { it.isNotEmpty() }.distinct()
-        if (localArtists.isEmpty()) return true
-        return localArtists.any { l ->
-            remoteArtists.any { r ->
-                l.contains(r) || r.contains(l) ||
-                    gradedSimilarity(r, l, r, l) >= MIN_ARTIST_SIMILARITY
+
+        val nRemoteTitle = normalizeStr(remote.name)
+        val base = normalizeStr(
+            local.nameForFilenameParse
+                .substringAfterLast('/')
+                .substringAfterLast('\\')
+                .substringBeforeLast('.'),
+        )
+        // Remote artist appears in the on-disk name (Thai or Latin).
+        if (remoteArtists.any { base.contains(it) }) return true
+
+        val tagArtist = local.artist?.takeIf { it.isNotBlank() }?.let { normalizeStr(it) }
+        if (!tagArtist.isNullOrEmpty()) {
+            return remoteArtists.any {
+                tagArtist.contains(it) || it.contains(tagArtist) ||
+                    gradedSimilarity(it, tagArtist, it, tagArtist) >= MIN_ARTIST_SIMILARITY
             }
+        }
+
+        // No tag artist: parse slot may be the title (swapped), not a real artist.
+        val parsedArtist = parseFilename(local.nameForFilenameParse).artist
+            ?.takeIf { it.isNotBlank() }
+            ?.let { normalizeStr(it) }
+        if (parsedArtist.isNullOrEmpty()) return true
+        if (nRemoteTitle.isNotEmpty() &&
+            (parsedArtist == nRemoteTitle ||
+                nRemoteTitle.contains(parsedArtist) ||
+                parsedArtist.contains(nRemoteTitle))
+        ) {
+            return true // swapped Title - Artist axes
+        }
+        // No tag artist + full Spotify title in the basename: channel prefix or
+        // other-script credit is not a contradiction (same-folder after link).
+        if (nRemoteTitle.isNotEmpty() && base.contains(nRemoteTitle)) {
+            return true
+        }
+        return remoteArtists.any {
+            parsedArtist.contains(it) || it.contains(parsedArtist) ||
+                gradedSimilarity(it, parsedArtist, it, parsedArtist) >= MIN_ARTIST_SIMILARITY
         }
     }
 
@@ -402,10 +494,16 @@ object Matcher {
             val nFileArtist: String,
             val fileTitleTokens: Set<String>,
             val fileArtistTokens: Set<String>,
+            /** Full basename normalized — YT Title - Artist / Thai names. */
+            val nRawBase: String,
         )
 
         private val entries: List<Entry> = locals.map { l ->
             val parsed = parseFilename(l.nameForFilenameParse)
+            val base = l.nameForFilenameParse
+                .substringAfterLast('/')
+                .substringAfterLast('\\')
+                .substringBeforeLast('.')
             Entry(
                 local = l,
                 nTitle = normalizeStr(l.displayTitle),
@@ -416,6 +514,7 @@ object Matcher {
                 nFileArtist = normalizeStr(parsed.artist ?: ""),
                 fileTitleTokens = tokenSet(parsed.title ?: ""),
                 fileArtistTokens = tokenSet(parsed.artist ?: ""),
+                nRawBase = normalizeStr(base),
             )
         }
 
@@ -451,19 +550,25 @@ object Matcher {
             artistTokens: Set<String>,
             nRArtists: List<String>,
             e: Entry,
-        ): Double = max(
-            cheapRankAxis(nTitle, titleTokens, artistTokens, nRArtists, e.nTitle, e.nArtist, e.titleTokens, e.artistTokens),
-            cheapRankAxis(
-                nTitle,
-                titleTokens,
-                artistTokens,
-                nRArtists,
-                e.nFileTitle,
-                e.nFileArtist,
-                e.fileTitleTokens,
-                e.fileArtistTokens,
-            ),
-        )
+        ): Double {
+            var best = max(
+                cheapRankAxis(nTitle, titleTokens, artistTokens, nRArtists, e.nTitle, e.nArtist, e.titleTokens, e.artistTokens),
+                cheapRankAxis(
+                    nTitle,
+                    titleTokens,
+                    artistTokens,
+                    nRArtists,
+                    e.nFileTitle,
+                    e.nFileArtist,
+                    e.fileTitleTokens,
+                    e.fileArtistTokens,
+                ),
+            )
+            if (nTitle.isNotEmpty() && e.nRawBase.isNotEmpty() && e.nRawBase.contains(nTitle)) {
+                best = max(best, 0.92)
+            }
+            return best
+        }
 
         private fun cheapRankAxis(
             nTitle: String,

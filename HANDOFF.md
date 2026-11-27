@@ -15,12 +15,14 @@ This host **already has the repo**. No re-clone:
 
 ```bash
 cd <slotify>
-git status -sb          # expect: ## 0.1.4...origin/0.1.4  (after first push)
+git status -sb          # expect: ## 0.1.4...origin/0.1.4  (in sync; dirty .mimocode/* + bugs.txt is normal)
 git pull --ff-only      # only if behind
 git log --oneline -8
-source env.sh           # JAVA_HOME must match THIS machine
+source env.sh           # JAVA_HOME must match THIS machine — confirm $JAVA_HOME/bin/java exists
 ./gradlew :composeApp:desktopTest --console=plain
 ./gradlew :androidApp:assembleDebug --console=plain
+# → androidApp/build/outputs/apk/debug/androidApp-debug.apk
+# Rebuild after any pull: an APK left from an older tip is stale (no cookies/sizing/sibling-fill until rebuilt).
 ```
 
 ### History
@@ -45,7 +47,7 @@ source env.sh           # JAVA_HOME must match THIS machine
 | **Desktop window sizing** | `0.1.3` | Event-driven only (AWT `ComponentListener` + Compose `windowState`); **no JNA poll** |
 | **Link file siblings** | `0.1.4` | After successful Link file, pin same-directory audio to **unmatched, non-held rows of that playlist only**; dual-axis title-words + artist gate |
 
-Design trail for those features: `specs/`, `plans/`, `reports/` in-repo.
+Design trail for those features: `specs/`, `reports/` in-repo (implementation plans deleted after delivery).
 
 ### Architecture rows already current on this branch
 
@@ -67,6 +69,11 @@ Design trail for those features: `specs/`, `plans/`, `reports/` in-repo.
 6. **YouTube downloads: opus stream copy, never re-encode.**
 7. **Volume control always visible** on every tab.
 8. Keep instructions copy-pasteable; surface errors where the user sees them (Settings → Last error, terminal stack traces via adapters).
+9. **Keep unused functions** until new replacements are written — do not purge old helpers mid-change (user, 2026-11-22).
+10. **No niri/window-manager config rules** to fix Slotify sizing — make the app open like a normal program that follows the compositor (user, 2026-11-22). Do **not** research niri window-rules as the solution either.
+11. **Do not silence Gradle/Kotlin warnings** — replace deprecated APIs / use supported plugins instead (user, 2026-11-22).
+12. **Ask before touching the user's phone via `adb`** — logcat, `run-as`, file pulls, installs all need explicit permission first. A device already listed in `adb devices` is NOT consent.
+13. **Report APK path + timestamp with every build handoff** (`androidApp/build/outputs/apk/debug/androidApp-debug.apk`) — user tests on device and needs the exact build identity.
 
 ---
 
@@ -89,7 +96,7 @@ User confirmed earlier (2026-10-27): desktop live. 0.0.2–0.0.3 (2026-11-22): A
 | Module | `:composeApp` KMP library (`com.android.kotlin.multiplatform.library` + `jvm("desktop")`) + thin `:androidApp` (`com.android.application`) APK shell + launcher icon. No AGP bypass flags in `gradle.properties`. |
 | Toolchain | Gradle **wrapper 9.8.2**, Kotlin **2.4.21**, CMP **1.12.2**, AGP **9.4.1**, **compileSdk 37** (PREVIEW package `platforms;android-37.0`), targetSdk 35, minSdk 26, JDK **21**. Desktop runtime artifact: `desktop-jvm-linux-x64` (not `compose.desktop.currentOs`). |
 | Desktop launch | `./run.sh` → `source env.sh` → `./gradlew :composeApp:run`. |
-| Desktop window | Soft open **1100×740**; WM owns geometry after map. **Event-driven only** — AWT `ComponentListener` + Compose `windowState` (no JNA geometry poll; a poll fought KWin and shrank the window). Current host: **KDE KWin Wayland** (was niri). |
+| Desktop window | Soft open **1100×740**; WM owns geometry after map. **Event-driven only — no timer/heartbeat/poll** (user 2026-11-27). Two sources, both one-way into AWT, **never write `windowState` from a side channel**: (1) AWT `ComponentListener` (KWin); (2) **X11 ConfigureNotify** on a dedicated Display connection — daemon blocks in `XNextEvent`, each real WM resize → one `awt.setSize` (**grow and shrink**). niri/XWayland often never delivers AWT ComponentEvent when the compositor resizes. **No inset math** on the X11 match (user: remove the insets). After our `setSize`, briefly ignore further X ConfigureNotify so coordinate noise cannot feed the OS window (2026-11-27 shrink-loop reversion). One-shot map adopt only — never a repeating geometry poll. Healthy match silent. |
 | Tags / scan | Shared walk: `distinctLibraryRoots` + `collectAudioFiles` (canonical dedupe, no double-count of nested roots). Desktop: jaudiotagger. **Android: jaudiotagger first** (parity with desktop titles/artists/ISRC), MediaMetadataRetriever fallback only. Single-file `readTrack` for Link/YouTube index. |
 | Playback | Desktop: vlcj. Android: MediaPlayer. **Four modes** (`PlaybackMode`): Linear → Shuffle → Artist(2) → Artist(★) via player-bar cycle + badge. Artist modes use `ArtistSession` (random artist blocks; **played set is in-memory** — app restart clears it; confirm dialog before wipe). **Android `isPlaying`:** optimistic on `load`/`play` so the button doesn’t stay “Play” while audio runs. **Playback failure → Quarantine:** corrupt file leaves the index; playlist rows → To be sourced + `heldTrackKeys` (stays unsourced until user pins/downloads). |
 | Persistence | JSON under app data (`~/.local/share/slotify/` desktop; `filesDir` Android). Atomic tmp+rename. **`playback.json`** = mode + resume (index/position). **`quarantine.json`** = corrupt paths. `LocalTrack.mark` re-applied by path after rescan. |
@@ -122,7 +129,7 @@ User confirmed earlier (2026-10-27): desktop live. 0.0.2–0.0.3 (2026-11-22): A
 
 - **Naming convention (agreed direction, not fully built):** on-disk names `Artist - Title [- Version].<ext>` (sanitize path-illegal chars). Multi-format OK; index one logical track, many file candidates. Prefer flac → opus → mp3 → aac at play/match time when several exist. No re-encode by default.
 - **Staging vs final (user, 2026-11-22):** under `Slotify/`, `downloads/` and `conversions/` hold temp/in-progress audio only. Finished working files at Slotify root. Purge staging is **manual**.
-- **Multi-root libraries (user, 2026-11-22):** roots can be mixed-artist collections. Matcher scores across **all** `libraryRoots`. Overlapping roots must go through `distinctLibraryRoots` (see 0.0.3). Open work: **listen-to-confirm** UX (confidence chip alone is not enough). Keep unused functions until replacements land.
+- **Multi-root libraries (user, 2026-11-22):** roots can be mixed-artist collections. Matcher scores across **all** `libraryRoots`. Overlapping roots must go through `distinctLibraryRoots` (see 0.0.3). Open work: **listen-to-confirm** UX (confidence chip alone is not enough).
 
 ### Floorp `sp_dc` (desktop)
 
@@ -153,11 +160,26 @@ User confirmed earlier (2026-10-27): desktop live. 0.0.2–0.0.3 (2026-11-22): A
 | Rename / heal | One-at-a-time editable rename walk (primary artist conservative); live pins kept; healed rows rematch immediately; broken paths → unsourced + held. |
 | Headless CLI | `./gradlew :composeApp:populatePlaylist --args="<spotify-url>"` → embed import + scan + match. |
 
-Design docs: `specs/2026-11-23-*.md`, `plans/…`, `reports/artist-shuffle.md`, `reports/cover-art-backdrop.md`.
+Design docs: `specs/2026-11-23-*.md`, `reports/artist-shuffle.md`, `reports/cover-art-backdrop.md` (implementation plans deleted after delivery).
 
 ---
 
 ## Open work
+
+Live user bug list: **`bugs.txt`** (untracked; user-owned — do not commit unless asked).
+
+### From `bugs.txt` (as of 2026-11-25)
+
+| Item | Status |
+|------|--------|
+| Linux resize / GUI does not reflow when tile grows or shrinks | **Dual path + shrink guard** 2026-11-27 — event-driven (KWin) + X11→AWT **grow/unstick only** (niri). **Do not remove either path; do not reintroduce inset-based setSize** (user: reversion if GUI shrinks again). Old “event-only” left 1100×740 in a 1256×1374 tile; 2px “adopt any mismatch” looped on inset delta 10×30. |
+| Batch YT quality (noise words, channel preference, false skips) | **Done** (`75399a7` / T93) — `stripNoise`, channel bonus, `searchUntilScore`, `youtubeBatchMinScore` slider |
+| Download status shows real source filename | **Done** (`75399a7` / T94) |
+| Public search rate-limit / empty after first queries; scrollable results | **Done** (`75399a7` / T95) — DDG→Lite→Bing + per-engine notes |
+| Batch button stops in-flight run | **Done** (`75399a7` / T97) |
+| Tracklist search quality (`word1 + word2` must-include; find own playlists) | **Open — T96** |
+
+### Still open (not in `bugs.txt`)
 
 - **T2 content-fingerprint reconnect**: size + head/tail hash per match; scan re-binds by fingerprint first; play-failure self-heal beyond quarantine. (Designed, not built.)
 - Android: **token storage still in-memory** if any PKCE path is revived; launcher icon from `graphics/slotify.png`.
@@ -172,7 +194,7 @@ Design docs: `specs/2026-11-23-*.md`, `plans/…`, `reports/artist-shuffle.md`, 
 ## Commands (project root)
 
 ```bash
-source env.sh   # FIRST — fix JAVA_HOME if this host’s JDK dir differs
+source env.sh   # FIRST — $JAVA_HOME/bin/java must exist on this host (see Machine-specific)
 ./run.sh                          # desktop
 SLOTIFY_DEMO=1 ./run.sh           # demo fixtures
 ./gradlew :composeApp:compileKotlinDesktop --console=plain
@@ -195,8 +217,8 @@ SLOTIFY_DEMO=1 ./run.sh           # demo fixtures
 ## Machine-specific (may differ per host)
 
 - Original authoring host: Manjaro x86_64, KDE Wayland; Floorp; ffmpeg n9.0.1; yt-dlp 2026.08.19; VLC 3.0.23.
-- Previous host (CachyOS): yt-dlp 2026.08.19, ffmpeg n9.0.2, libvlc 3.0.23 + `vlc-plugins-base`. JDK 21 at `~/tools/jdk-21.0.13+9` (see `env.sh`); Android SDK at `~/tools/android-sdk` with `platforms;android-37.0` + `build-tools;35.0.0`.
-- This host (last re-measure): **KDE KWin Wayland** (was niri). JDK path in `env.sh` (`JAVA_HOME` — confirm it exists here; known value `~/tools/jdk-21.0.13+9`). Android SDK `~/tools/android-sdk` with `platforms;android-37.0`. Branch **`0.1.4`** after `git pull`. APK ~66MB (yt-dlp/ffmpeg natives).
+- Previous host (CachyOS): yt-dlp 2026.08.19, ffmpeg n9.0.2, libvlc 3.0.23 + `vlc-plugins-base`. JDK 21 at `~/tools/jdk-21.0.13+9`; Android SDK at `~/tools/android-sdk` with `platforms;android-37.0` + `build-tools;35.0.0`.
+- This host (last re-measure 2026-11-27): **KDE KWin Wayland** (was niri). JDK **`~/tools/jdk-21.0.13.1+2`** (`env.sh` → `JAVA_HOME`; confirm `$JAVA_HOME/bin/java` exists — older notes said `jdk-21.0.13+9`, which is **wrong here**). Android SDK `~/tools/android-sdk` with `platforms;android-37.0`. yt-dlp **2026.10.26**, ffmpeg **n9.1**. Branch **`0.1.4`** (in sync with `origin/0.1.4`). APK ~66MB (yt-dlp/ffmpeg natives) — **rebuild after pull**; last on-disk APK may predate tip.
 - Library: `/home/owner/Music` (~98 files post-whitelist on original host; 40 `.m4a` excluded by design). Android default root `/sdcard/Music` (single path — do not also add `/storage/emulated/0/Music` or files double-count before canonicalization).
 
 Do **not** commit: `spotify-app.txt`, `~/.local/share/slotify/*` / Android `filesDir` JSON, cookies, Client IDs in notes if avoidable (Client ID in Settings is public-ish for PKCE but still machine state).

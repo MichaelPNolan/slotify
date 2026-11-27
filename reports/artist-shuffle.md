@@ -3,8 +3,6 @@ feature: artist-shuffle
 status: delivered
 specs:
   - specs/2026-11-23-artist-shuffle-design.md
-plans:
-  - plans/2026-11-23-artist-shuffle.md
 branch: 0.1.0
 commits: aac1754..5724108
 ---
@@ -62,4 +60,3 @@ Library rows gained the same narrow cycling mark chip as playlist rows — **m**
 | File | Role | Notes |
 |------|------|-------|
 | `specs/2026-11-23-artist-shuffle-design.md` | Design spec | 13 sections, user-approved |
-| `plans/2026-11-23-artist-shuffle.md` | Implementation plan | 11 tasks, executed inline |
