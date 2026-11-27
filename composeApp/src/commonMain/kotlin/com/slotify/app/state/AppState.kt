@@ -18,6 +18,9 @@ import com.slotify.app.library.proposeSongFileName
 import com.slotify.app.library.LibraryScanner
 import com.slotify.app.library.createLibraryScanner
 import com.slotify.app.library.writeAudioMetadata
+import com.slotify.app.loudness.analyseFileLoudness
+import com.slotify.app.loudness.appLoudnessStore
+import com.slotify.app.loudness.supportsLoudnessBalance
 import com.slotify.app.match.Matcher
 import com.slotify.app.model.AppPlaylist
 import com.slotify.app.model.LocalTrack
@@ -259,6 +262,24 @@ class AppState(
 
     private val _linkFillRunning = MutableStateFlow(false)
     val linkFillRunning: StateFlow<Boolean> = _linkFillRunning.asStateFlow()
+
+    /** App-private loudness analysis + playlist mean profiles. */
+    val loudnessStore = appLoudnessStore()
+
+    private val _loudnessStatus = MutableStateFlow<String?>(null)
+    /** Backfill progress (Playlist detail line). Terminal statuses start with “Loudness”. */
+    val loudnessStatus: StateFlow<String?> = _loudnessStatus.asStateFlow()
+
+    private var loudnessJob: Job? = null
+
+    /** Fire-and-forget analysis for one new download (no status UI). */
+    fun analyseLoudnessAsync(path: String) {
+        if (!supportsLoudnessBalance()) return
+        scope.launch(Dispatchers.Default) {
+            val r = analyseFileLoudness(path) ?: return@launch
+            withContext(Dispatchers.IO) { loudnessStore.putTrack(path, r) }
+        }
+    }
 
     private val _youtubeBatchRunning = MutableStateFlow(false)
     /** True while [batchFetchYoutube] is walking a playlist. */
@@ -855,6 +876,7 @@ class AppState(
         if (local != null && _library.value.none { it.filePath == local.filePath }) {
             _library.value = _library.value + local
             withContext(Dispatchers.IO) { repository.saveLibrary(_library.value) }
+            if (supportsLoudnessBalance()) analyseLoudnessAsync(finalPath)
         }
 
         if (playlistId != null) {
@@ -3085,6 +3107,81 @@ class AppState(
         player.setVolume(v)
         if (persist) {
             updateSettings { it.copy(volume = v) }
+        }
+    }
+
+    // ── Loudness backfill ────────────────────────────────────────────
+
+    fun startLoudnessBackfill(playlistId: String) {
+        if (!supportsLoudnessBalance()) return
+        val playlist = _playlists.value.find { it.id == playlistId } ?: return
+        if (loudnessJob?.isActive == true) return
+        _loudnessStatus.value = "Preparing loudness analysis…"
+        loudnessJob = scope.launch(Dispatchers.Default) {
+            var failed = 0
+            var done = 0
+            try {
+                val paths = playlist.resolvedTracks
+                    .mapNotNull { it.match?.local?.filePath }
+                    .distinct()
+                val todo = paths.filter { loudnessStore.track(it) == null }
+                val total = todo.size
+                if (total == 0) {
+                    _loudnessStatus.value = "All tracks already analysed"
+                    recomputePlaylistProfile(playlistId)
+                    return@launch
+                }
+                for (p in todo) {
+                    ensureActive()
+                    val name = p.substringAfterLast('/')
+                    _loudnessStatus.value =
+                        "Analysing loudness… ${done + 1}/$total (${name.take(32)})"
+                    val r = withContext(Dispatchers.IO) { analyseFileLoudness(p) }
+                    if (r != null) {
+                        withContext(Dispatchers.IO) { loudnessStore.putTrack(p, r) }
+                    } else {
+                        failed++
+                    }
+                    done++
+                }
+                recomputePlaylistProfile(playlistId)
+                _loudnessStatus.value = if (failed > 0) {
+                    "Loudness done · $done analysed · $failed failed"
+                } else {
+                    "Loudness done · $done analysed"
+                }
+            } catch (e: CancellationException) {
+                recomputePlaylistProfile(playlistId)
+                _loudnessStatus.value = "Loudness cancelled"
+                throw e
+            } catch (e: Exception) {
+                _loudnessStatus.value =
+                    "Loudness failed: ${e.message ?: e::class.simpleName}"
+            }
+        }
+    }
+
+    fun cancelLoudnessBackfill() {
+        loudnessJob?.cancel()
+    }
+
+    fun playlistMeanLufs(playlistId: String): Double? =
+        loudnessStore.playlist(playlistId)?.meanLufs
+
+    private fun recomputePlaylistProfile(playlistId: String) {
+        val playlist = _playlists.value.find { it.id == playlistId } ?: return
+        val paths = playlist.resolvedTracks
+            .mapNotNull { it.match?.local?.filePath }
+            .distinct()
+        val lufs = paths.mapNotNull { loudnessStore.track(it)?.integratedLufs }
+        if (lufs.isEmpty()) return
+        runCatching {
+            loudnessStore.putPlaylist(
+                id = playlistId,
+                meanLufs = lufs.average(),
+                analysedCount = lufs.size,
+                totalMembers = paths.size,
+            )
         }
     }
 
