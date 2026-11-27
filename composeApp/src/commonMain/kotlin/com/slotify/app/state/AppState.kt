@@ -3251,7 +3251,8 @@ class AppState(
         if (!supportsLoudnessBalance()) return
         val playlist = _playlists.value.find { it.id == playlistId } ?: return
         if (loudnessJob?.isActive == true) return
-        _loudnessStatus.value = "Preparing loudness analysis…"
+        val plName = playlist.name.take(24)
+        _loudnessStatus.value = "Preparing loudness analysis · $plName…"
         loudnessJob = scope.launch(Dispatchers.Default) {
             var failed = 0
             var done = 0
@@ -3262,7 +3263,7 @@ class AppState(
                 val todo = paths.filter { loudnessStore.track(it) == null }
                 val total = todo.size
                 if (total == 0) {
-                    _loudnessStatus.value = "All tracks already analysed"
+                    _loudnessStatus.value = "All tracks already analysed · $plName"
                     recomputePlaylistProfile(playlistId)
                     return@launch
                 }
@@ -3270,7 +3271,7 @@ class AppState(
                     ensureActive()
                     val name = p.substringAfterLast('/')
                     _loudnessStatus.value =
-                        "Analysing loudness… ${done + 1}/$total (${name.take(32)})"
+                        "Analysing $plName · ${done + 1}/$total (${name.take(32)})"
                     val r = withContext(Dispatchers.IO) { analyseFileLoudness(p) }
                     if (r != null) {
                         withContext(Dispatchers.IO) { loudnessStore.putTrack(p, r) }
@@ -3281,13 +3282,13 @@ class AppState(
                 }
                 recomputePlaylistProfile(playlistId)
                 _loudnessStatus.value = if (failed > 0) {
-                    "Loudness done · $done analysed · $failed failed"
+                    "Loudness done · $plName · $done analysed · $failed failed"
                 } else {
-                    "Loudness done · $done analysed"
+                    "Loudness done · $plName · $done analysed"
                 }
             } catch (e: CancellationException) {
                 recomputePlaylistProfile(playlistId)
-                _loudnessStatus.value = "Loudness cancelled"
+                _loudnessStatus.value = "Loudness cancelled · $plName"
                 throw e
             } catch (e: Exception) {
                 _loudnessStatus.value =

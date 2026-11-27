@@ -28,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.slotify.app.loudness.supportsLoudnessBalance
 import com.slotify.app.state.AppState
+import com.slotify.app.state.loudnessTargetPlaylistId
 import com.slotify.app.state.showLoudnessAnalyseButton
 
 /**
@@ -41,9 +42,17 @@ fun VolumeControl(state: AppState) {
     val volume by state.volume.collectAsState()
     val loudness by state.loudnessBar.collectAsState()
     val playerSnap by state.player.snapshot.collectAsState()
+    val ui by state.ui.collectAsState()
     val activePlaylistId by state.activePlaylistId.collectAsState()
     val loudnessStatus by state.loudnessStatus.collectAsState()
     val reduction by state.player.reductionMeter.collectAsState()
+
+    // Prefer the open playlist detail over last-played (user opened AusCockRock
+    // but playback was still Thai Orathai — old bug analysed the wrong list).
+    val analyseTargetId = loudnessTargetPlaylistId(
+        openDetailPlaylistId = ui.detailPlaylistId,
+        activePlaybackPlaylistId = activePlaylistId,
+    )
 
     val analysisRunning = loudnessStatus != null &&
         !loudnessStatus!!.startsWith("Loudness done") &&
@@ -53,7 +62,7 @@ fun VolumeControl(state: AppState) {
     val stopping = loudnessStatus?.startsWith("Stopping analysis") == true
     val showAnalyse = showLoudnessAnalyseButton(
         isPlaying = playerSnap.isPlaying,
-        hasActivePlaylist = activePlaylistId != null,
+        hasActivePlaylist = analyseTargetId != null,
         loudnessSupported = supportsLoudnessBalance(),
     )
 
@@ -93,7 +102,7 @@ fun VolumeControl(state: AppState) {
             TextButton(
                 onClick = {
                     if (stopping) return@TextButton
-                    val id = activePlaylistId ?: return@TextButton
+                    val id = analyseTargetId ?: return@TextButton
                     if (analysisRunning) state.cancelLoudnessBackfill()
                     else state.startLoudnessBackfill(id)
                 },
