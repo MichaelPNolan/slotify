@@ -304,7 +304,7 @@ fun recommendedBoostDb(trackLufs: Double, meanLufs: Double?, maxBoostDb: Double)
 
 Implementation notes for the implementer:
 - `ArrayDeque.elementAt` is O(n) — store the ring as `DoubleArray(ringCapacity)` + `head`/`size` indices instead if tests are slow.
-- The first partial loop in an early draft that processes only channel 0 is a mistake — the real loop must walk `i += channels` and call `kWeight(ch, …)` for each channel (stereo state must not be shared).
+- The channel-aware loop must walk `i += channels` and call `kWeight(ch, …)` per channel (stereo filter state must not be shared).
 - Gating: absolute −70 LUFS, then relative −10 LU of the absolute-gated mean; integrated = −0.691 + 10·log10(mean of gated powers × channels).
 - If sine test fails high/low by >3 LU, check `−0.691` offset and that each channel’s mean square is multiplied by weight 1.0 before averaging.
 
