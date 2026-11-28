@@ -21,6 +21,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +50,7 @@ fun App(state: AppState) {
     val ui by state.ui.collectAsState()
     val settings by state.settings.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val saveableStateHolder = rememberSaveableStateHolder()
     // First run shows the legal notice until acknowledged; Settings can re-open it.
     var showLegalNotice by remember { mutableStateOf(false) }
 
@@ -69,7 +71,7 @@ fun App(state: AppState) {
                         VolumeControl(state)
                         NavigationBar {
                             NavigationBarItem(
-                                selected = ui.tab == Tab.PLAYLISTS && ui.detailPlaylistId == null,
+                                selected = ui.tab == Tab.PLAYLISTS,
                                 onClick = { state.selectTab(Tab.PLAYLISTS) },
                                 icon = { Icon(Icons.AutoMirrored.Filled.PlaylistPlay, contentDescription = null) },
                                 label = { Text("Playlists") },
@@ -92,18 +94,24 @@ fun App(state: AppState) {
             ) { padding ->
                 Box(modifier = Modifier.fillMaxSize().padding(padding)) {
                     when {
-                        ui.detailPlaylistId != null -> PlaylistDetailScreen(
-                            state = state,
-                            playlistId = ui.detailPlaylistId!!,
-                        )
+                        ui.tab == Tab.SETTINGS -> SettingsScreen(state = state)
+                        ui.tab == Tab.LIBRARY -> LibraryScreen(state = state)
+                        // SaveableStateProvider keeps each playlist's scroll
+                        // position alive while the user visits Settings/Library.
+                        ui.detailPlaylistId != null -> {
+                            val detailId = ui.detailPlaylistId!!
+                            saveableStateHolder.SaveableStateProvider(key = detailId) {
+                                PlaylistDetailScreen(
+                                    state = state,
+                                    playlistId = detailId,
+                                )
+                            }
+                        }
 
-                        ui.tab == Tab.PLAYLISTS -> PlaylistsScreen(
+                        else -> PlaylistsScreen(
                             state = state,
                             onOpenSettings = { state.selectTab(Tab.SETTINGS) },
                         )
-
-                        ui.tab == Tab.LIBRARY -> LibraryScreen(state = state)
-                        ui.tab == Tab.SETTINGS -> SettingsScreen(state = state)
                     }
                     if (!settings.disclaimerAccepted || showLegalNotice) {
                         LegalDisclaimerDialog(onDismiss = {

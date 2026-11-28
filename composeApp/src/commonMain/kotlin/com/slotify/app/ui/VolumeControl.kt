@@ -50,7 +50,13 @@ fun VolumeControl(state: AppState) {
     // Prefer the open playlist detail over last-played (user opened AusCockRock
     // but playback was still Thai Orathai — old bug analysed the wrong list).
     val analyseTargetId = loudnessTargetPlaylistId(
-        openDetailPlaylistId = ui.detailPlaylistId,
+        // Only an *visible* detail counts — the id is kept while the user is
+        // on Settings/Library so back-navigation can restore it.
+        openDetailPlaylistId = if (ui.tab == com.slotify.app.state.Tab.PLAYLISTS) {
+            ui.detailPlaylistId
+        } else {
+            null
+        },
         activePlaybackPlaylistId = activePlaylistId,
     )
 

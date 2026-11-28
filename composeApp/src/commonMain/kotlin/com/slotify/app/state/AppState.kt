@@ -418,7 +418,7 @@ class AppState(
         _libraryFollow.value = true
         _libraryFollowTick.value++
         // Show the list so the scroll is visible (no-op if already on Library).
-        if (_ui.value.tab != Tab.LIBRARY || _ui.value.detailPlaylistId != null) {
+        if (_ui.value.tab != Tab.LIBRARY) {
             selectTab(Tab.LIBRARY)
         }
     }
@@ -510,7 +510,15 @@ class AppState(
     // ── Navigation ───────────────────────────────────────────────────
 
     fun selectTab(tab: Tab) {
-        _ui.value = _ui.value.copy(tab = tab, detailPlaylistId = null)
+        val ui = _ui.value
+        _ui.value = when {
+            // Re-tapping Playlists while already in Playlists = go up to the list.
+            tab == Tab.PLAYLISTS && ui.tab == Tab.PLAYLISTS ->
+                ui.copy(detailPlaylistId = null)
+            // Keep the open playlist across Settings/Library so returning to
+            // Playlists lands on the same detail list and scroll position.
+            else -> ui.copy(tab = tab)
+        }
     }
 
     fun openPlaylist(id: String) {
