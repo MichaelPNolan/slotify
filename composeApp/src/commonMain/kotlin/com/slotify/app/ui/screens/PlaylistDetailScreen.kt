@@ -630,10 +630,7 @@ private fun MatchedRow(
     val loudness = remember(loudnessRevision, showChips, localPath) {
         if (showChips) state.loudnessStore.track(localPath) else null
     }
-    // Custom correction gets a glow even when chip numbers are hidden.
-    val customDynamics = remember(loudnessRevision, localPath) {
-        state.loudnessStore.track(localPath)?.correction == CorrectionMode.CUSTOM
-    }
+
     var showLoudnessSheet by remember { mutableStateOf(false) }
     if (showLoudnessSheet && loudness != null) {
         LoudnessDetailDialog(
@@ -742,29 +739,10 @@ private fun MatchedRow(
 
     val dimmed = row.mark == RowMark.DELETE || row.mark == RowMark.SKIP
 
-    val glowShape = MaterialTheme.shapes.medium
-    val glowColor = MaterialTheme.colorScheme.tertiary
-    val rowMarker = if (customDynamics) {
-        Modifier
-            .padding(horizontal = 8.dp, vertical = 4.dp)
-            .shadow(
-                elevation = 12.dp,
-                shape = glowShape,
-                ambientColor = glowColor,
-                spotColor = glowColor,
-            )
-            .background(glowColor.copy(alpha = 0.12f), glowShape)
-            .border(1.5.dp, glowColor.copy(alpha = 0.85f), glowShape)
-            .padding(horizontal = 6.dp)
-    } else {
-        Modifier
-    }
-
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .then(gestureModifier)
-            .then(rowMarker)
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -802,19 +780,50 @@ private fun MatchedRow(
                         modifier = Modifier.weight(1f, fill = false),
                     )
                     if (loudness != null) {
+                        // Custom dynamics glow on the chip — it is the tap
+                        // target for the per-track correction settings.
+                        val chipCustom = loudness.correction == CorrectionMode.CUSTOM
+                        val chipGlow = MaterialTheme.colorScheme.tertiary
                         Text(
                             text = loudness.chip0_99.toString(),
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (loudness.chip0_99 < 40) {
+                            color = if (chipCustom || loudness.chip0_99 < 40) {
                                 MaterialTheme.colorScheme.tertiary
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },
                             modifier = Modifier
                                 .padding(start = 6.dp)
+                                .then(
+                                    if (chipCustom) {
+                                        Modifier.shadow(
+                                            elevation = 8.dp,
+                                            shape = MaterialTheme.shapes.small,
+                                            ambientColor = chipGlow,
+                                            spotColor = chipGlow,
+                                        )
+                                    } else {
+                                        Modifier
+                                    },
+                                )
                                 .background(
-                                    MaterialTheme.colorScheme.surfaceVariant,
+                                    if (chipCustom) {
+                                        chipGlow.copy(alpha = 0.22f)
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceVariant
+                                    },
                                     MaterialTheme.shapes.small,
+                                )
+                                .then(
+                                    if (chipCustom) {
+                                        Modifier.border(
+                                            1.dp,
+                                            chipGlow.copy(alpha = 0.9f),
+                                            MaterialTheme.shapes.small,
+                                        )
+                                    } else {
+                                        Modifier
+                                    },
                                 )
                                 .padding(horizontal = 4.dp, vertical = 1.dp)
                                 .clickable { showLoudnessSheet = true },
