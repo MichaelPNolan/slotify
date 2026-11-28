@@ -104,6 +104,7 @@ class MainActivity : ComponentActivity() {
 
         initYoutubeRuntime(applicationContext)
         requestAudioPermissionIfMissing()
+        requestNotificationPermissionIfMissing()
         // One-shot: if music folder isn’t writable yet, open All files access.
         if (!hasSharedMusicWriteAccess()) {
             storageAccessRequestor?.invoke()
@@ -223,6 +224,16 @@ class MainActivity : ComponentActivity() {
             PackageManager.PERMISSION_GRANTED
         ) {
             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    /** Media notification (lock-screen controls) needs this grant on API 33+. */
+    private fun requestNotificationPermissionIfMissing() {
+        if (Build.VERSION.SDK_INT < 33) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 }

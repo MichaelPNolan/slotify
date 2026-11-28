@@ -54,7 +54,9 @@ import com.slotify.app.playback.ArtistSourceItem
 import com.slotify.app.playback.AudioPlayer
 import com.slotify.app.playback.PlaybackMode
 import com.slotify.app.playback.PlayerEvent
+import com.slotify.app.playback.SystemMediaState
 import com.slotify.app.playback.createAudioPlayer
+import com.slotify.app.playback.createSystemMediaControls
 import com.slotify.app.playback.cycle
 import com.slotify.app.playback.initialMode
 import com.slotify.app.playback.isArtistMode
@@ -85,6 +87,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
@@ -435,6 +438,15 @@ class AppState(
 
     private var playbackStore: PlaybackStore = repository.loadPlayback()
 
+    /** OS lock-screen / media-notification controls — additive; player untouched. */
+    private val systemMediaControls = createSystemMediaControls(
+        onPlayPause = { togglePlay() },
+        onNext = { advance(1, auto = false) },
+        onPrevious = { advance(-1, auto = false) },
+        onSeekTo = { seekTo(it) },
+        onStop = { if (player.snapshot.value.isPlaying) togglePlay() },
+    )
+
     init {
         // First run: seed suggested library roots (persisted empty → platform defaults).
         if (_settings.value.libraryRoots.isEmpty()) {
@@ -461,6 +473,18 @@ class AppState(
                 val path = _nowPlaying.value?.path ?: return@collect
                 applyLoudnessToPlayer(path)
             }
+        }
+        // Keep OS media controls (lock screen / notification) in step.
+        scope.launch {
+            combine(_nowPlaying, player.snapshot) { np, snap ->
+                SystemMediaState(
+                    title = np?.title ?: "",
+                    artist = np?.artist ?: "",
+                    isPlaying = snap.isPlaying,
+                    positionMs = snap.positionMs,
+                    durationMs = snap.durationMs,
+                )
+            }.distinctUntilChanged().collect { systemMediaControls.update(it) }
         }
         // Periodic resume snapshot while playing (position + index).
         scope.launch {
@@ -3372,6 +3396,7 @@ class AppState(
         persistPlaybackProgress()
         runCatching { repository.savePlayback(playbackStore) }
         player.release()
+        systemMediaControls.release()
         scope.cancel()
     }
 

@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Media notification for lock-screen controls (Android 13+ runtime grant). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <!-- Visualizer peak meter for loudness limiter feedback (playback session). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
