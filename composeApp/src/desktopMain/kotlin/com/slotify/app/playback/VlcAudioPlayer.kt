@@ -36,6 +36,10 @@ class VlcAudioPlayer : AudioPlayer {
     private val _reductionMeter = MutableStateFlow(0f)
     override val reductionMeter: StateFlow<Float> = _reductionMeter.asStateFlow()
 
+    /** Desktop has no session dynamics — status stays explicit. */
+    private val _dynamicsStatus = MutableStateFlow("Desktop: dynamics n/a (VLC)")
+    override val dynamicsStatus: StateFlow<String> = _dynamicsStatus.asStateFlow()
+
     init {
         player.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
             override fun playing(mp: MediaPlayer) {

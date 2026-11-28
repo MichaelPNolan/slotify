@@ -48,6 +48,7 @@ source env.sh           # JAVA_HOME must match THIS machine — confirm $JAVA_HO
 | **Desktop window sizing** | `0.1.3` | Event-driven only (AWT `ComponentListener` + Compose `windowState`); **no JNA poll** |
 | **Link file siblings** | `0.1.4` | After successful Link file, pin same-directory audio to **unmatched, non-held rows of that playlist only**; dual-axis title-words + artist gate |
 | **Loudness balance** | `0.1.5` | Pure-Kotlin EBU R128; app-private `loudness.json`; playlist mean; boost-only + DynamicsProcessing limiter (API 28+); volume-row remedy / Analyse when paused — see `reports/loudness-balance.md` |
+| **Dynamics diagnostics** | `0.1.5` | Non-silent attach: logcat **`SlotifyDyn`** + Settings status line; **alt engine** = `LoudnessEnhancer` (boost only) vs builtin `DynamicsProcessing` — Settings → Dynamics engine |
 
 Design trail for those features: `specs/`, `reports/` in-repo (implementation plans deleted after delivery — loudness plan still in `plans/2026-11-27-loudness-balance.md`).
 
@@ -58,6 +59,7 @@ Design trail for those features: `specs/`, `reports/` in-repo (implementation pl
 - **Android play icon:** optimistic `isPlaying` on load/play (prepareAsync used to leave the button on “Play”).
 - **Spotify Settings:** connection / PKCE / browser-cookie **probe section removed**; URL paste + public search remain. Manual `sp_dc`/embed cookie path still used for private playlist **import** via Floorp reader on desktop.
 - **Link file sibling fill (0.1.4):** `Matcher.siblingMatchConfidence` + `assignSiblingLinks`. **Only** unmatched + non-held rows of the playlist you linked in. Title evidence (containment or ≥1 significant shared title word on tag **or** filename) **and** artist evidence when both known. One file → one track. Skips matched paths, existing pins, quarantine. Android `content://` → no directory walk (returns 0).
+- **Dynamics engines (0.1.5):** Settings → **Dynamics engine** — `builtin` = `DynamicsProcessing` (boost + limiter); `alt` = `LoudnessEnhancer` (separate effect, **boost only**, no limiter). Attach is **non-silent**: `adb logcat -s SlotifyDyn:I` and Settings status under Loudness balance. Status includes session id, `hasControl`, `getEnabled`, read-back gain/limiter. Desktop: status always “n/a (VLC)”.
 
 ---
 
@@ -183,7 +185,8 @@ Design docs: `specs/2026-11-23-*.md`, `reports/artist-shuffle.md`, `reports/cove
 
 ### Still open
 
-- **Loudness limiter — real device audio not yet proven (user, 2026-11-27):** Custom threshold/gain changes **still inaudible** on device after `setEnabled(true)` + re-apply-on-store-change (`ce6a969`). **TODO: real listening tests** (loud track, Custom mode, sweep threshold −24…0 and gain; confirm DynamicsProcessing actually processes MediaPlayer stream; consider logcat `AudioEffect` / `DynamicsProcessing`, session id, or A/B with postGain only). Unit tests do **not** cover device audio.
+- **Loudness limiter — real device audio not yet proven (user, 2026-11-27):** Custom threshold/gain changes **still inaudible** on device after `setEnabled(true)` + re-apply-on-store-change (`ce6a969`). **Diagnostics landed (this tip):** non-silent attach (`SlotifyDyn` logcat + Settings status) and **alt LoudnessEnhancer** engine for A/B. **Next:** install APK from this tip, play a track, read status / `adb logcat -s SlotifyDyn:I`; if `alt OK` is audible but builtin is not, bug is DynamicsProcessing wiring; if neither attaches, session/output path. Unit tests do **not** cover device audio.
+- **Debug APK signing — two workstations, one device (user, 2026-11-28):** each machine’s default debug keystore differs → `INSTALL_FAILED_UPDATE_INCOMPATIBLE` when installing an APK built on machine B over one from machine A. **Need a shared signing setup** so both hosts can build installable-over-each-other debug (or release) APKs without `adb uninstall` (which **wipes app-private settings/playlists/loudness/cookies**). Store the keystore + passwords outside the repo or in a documented private path; wire `signingConfigs` in `androidApp/build.gradle.kts`; **never commit keystore/passwords**. Until then: uninstall loses data, or keep one build host for the phone.
 - **T96 tracklist search quality** (`word1 + word2` must-include; find user’s own playlists) — was on `bugs.txt`, not implemented.
 - **T2 content-fingerprint reconnect**: size + head/tail hash per match; scan re-binds by fingerprint first; play-failure self-heal beyond quarantine. (Designed, not built.)
 - Android: **token storage still in-memory** if any PKCE path is revived; launcher icon from `graphics/slotify.png`.
@@ -208,6 +211,8 @@ SLOTIFY_DEMO=1 ./run.sh           # demo fixtures
 ./gradlew :androidApp:assembleDebug --console=plain
 # → androidApp/build/outputs/apk/debug/androidApp-debug.apk
 ./gradlew :composeApp:populatePlaylist --args="https://open.spotify.com/playlist/…" --console=plain
+# Dynamics attach diagnostics (after install + play a track):
+adb logcat -s SlotifyDyn:I
 ```
 
 - Long GUI/build runs: **detach** (`setsid nohup … > /tmp/log 2>&1 < /dev/null &`). Aborted blocking polls kill the run.
@@ -226,7 +231,7 @@ SLOTIFY_DEMO=1 ./run.sh           # demo fixtures
 - This host (last re-measure 2026-11-27): **KDE KWin Wayland** (was niri). JDK **`~/tools/jdk-21.0.13.1+2`** (`env.sh` → `JAVA_HOME`; confirm `$JAVA_HOME/bin/java` exists — older notes said `jdk-21.0.13+9`, which is **wrong here**). Android SDK `~/tools/android-sdk` with `platforms;android-37.0`. yt-dlp **2026.10.26**, ffmpeg **n9.1**. Branch **`0.1.4`** (in sync with `origin/0.1.4`). APK ~66MB (yt-dlp/ffmpeg natives) — **rebuild after pull**; last on-disk APK may predate tip.
 - Library: `/home/owner/Music` (~98 files post-whitelist on original host; 40 `.m4a` excluded by design). Android default root `/sdcard/Music` (single path — do not also add `/storage/emulated/0/Music` or files double-count before canonicalization).
 
-Do **not** commit: `spotify-app.txt`, `~/.local/share/slotify/*` / Android `filesDir` JSON, cookies, Client IDs in notes if avoidable (Client ID in Settings is public-ish for PKCE but still machine state).
+Do **not** commit: `spotify-app.txt`, `~/.local/share/slotify/*` / Android `filesDir` JSON, cookies, Client IDs in notes if avoidable (Client ID in Settings is public-ish for PKCE but still machine state). **Do not commit Android keystores or signing passwords** — see Open work “Debug APK signing”.
 
 ---
 

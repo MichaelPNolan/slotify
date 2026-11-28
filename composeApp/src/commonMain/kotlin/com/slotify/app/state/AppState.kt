@@ -433,6 +433,7 @@ class AppState(
         _playbackMode.value = playbackStore.initialMode()
         _shuffleEnabled.value = _playbackMode.value != PlaybackMode.LINEAR
         _activePlaylistId.value = playbackStore.activePlaylistId
+        player.setDynamicsEngine(_settings.value.dynamicsEngine)
         scope.launch {
             player.events.collect { event ->
                 when (event) {
@@ -518,9 +519,14 @@ class AppState(
         // (possibly stale) in-memory snapshot — otherwise an out-of-band file
         // edit (e.g. a client ID provisioned externally) is clobbered by the
         // next unrelated save such as a volume drag.
+        val prevEngine = _settings.value.dynamicsEngine
         val next = transform(repository.loadSettings())
         _settings.value = next
         scope.launch { repository.saveSettings(next) }
+        if (next.dynamicsEngine != prevEngine) {
+            player.setDynamicsEngine(next.dynamicsEngine)
+            refreshLoudnessForCurrentTrack()
+        }
     }
 
     // ── YouTube cookies.txt (NOT Spotify browser sp_dc) ──────────────
@@ -3226,6 +3232,10 @@ class AppState(
         )
         _loudnessBar.value = LoudnessBar(boostDb = boost, limiting = limiting)
     }
+
+    /** Last dynamics attach line from the player (Settings diagnostics). */
+    val dynamicsStatus: StateFlow<String>
+        get() = player.dynamicsStatus
 
     /** Re-read store + push correction to the player for the current path (live sliders). */
     fun refreshLoudnessForCurrentTrack() {
