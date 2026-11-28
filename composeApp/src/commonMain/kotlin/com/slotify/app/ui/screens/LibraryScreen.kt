@@ -20,10 +20,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -60,7 +58,6 @@ fun LibraryScreen(state: AppState) {
     val scanStatus by state.scanStatus.collectAsState()
     val nowPlaying by state.nowPlaying.collectAsState()
     val playedKeys by state.playedKeys.collectAsState()
-    val playerSnap by state.player.snapshot.collectAsState()
     val playlists by state.playlists.collectAsState()
     val settings by state.settings.collectAsState()
     val followEnabled by state.libraryFollow.collectAsState()
@@ -228,7 +225,10 @@ fun LibraryScreen(state: AppState) {
                                     if (isCurrent) MaterialTheme.colorScheme.onSurface
                                     else Color.Transparent,
                                 )
-                                .clickable { state.requestLibraryPick(filtered, index) }
+                                .clickable {
+                                    if (isCurrent) state.togglePlay()
+                                    else state.requestLibraryPick(filtered, index)
+                                }
                                 .padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -271,25 +271,6 @@ fun LibraryScreen(state: AppState) {
                                     Icons.Default.Add,
                                     contentDescription = "Add to playlist",
                                     tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                            }
-                            val showStop = isCurrent && playerSnap.isPlaying
-                            IconButton(
-                                onClick = {
-                                    if (isCurrent) state.togglePlay()
-                                    else state.requestLibraryPick(filtered, index)
-                                },
-                                modifier = Modifier.size(36.dp),
-                            ) {
-                                Icon(
-                                    imageVector = if (showStop) Icons.Default.Stop else Icons.Default.PlayArrow,
-                                    contentDescription = if (showStop) "Stop" else "Play",
-                                    tint = if (showStop) {
-                                        MaterialTheme.colorScheme.error
-                                    } else {
-                                        MaterialTheme.colorScheme.primary
-                                    },
                                     modifier = Modifier.size(20.dp),
                                 )
                             }
