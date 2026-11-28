@@ -26,6 +26,24 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // Shared debug keystore (committed on purpose — repo is private) so every
+    // workstation signs with the same key and APKs install over each other on a
+    // device without uninstalling (which wipes app-private data). Valid 2026–2056.
+    signingConfigs {
+        create("sharedDebug") {
+            storeFile = file("signing/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("sharedDebug")
+        }
+    }
+
     sourceSets["main"].manifest.srcFile("src/main/AndroidManifest.xml")
 
     packaging {

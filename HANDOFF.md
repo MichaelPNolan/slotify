@@ -182,11 +182,11 @@ Design docs: `specs/2026-11-23-*.md`, `reports/artist-shuffle.md`, `reports/cove
 | Public search rate-limit / scroll | **Done** (`75399a7` / T95) |
 | Batch stop button | **Done** (`75399a7` / T97) |
 | Link file cascade + Thai filename match + live status | **Done** (`fb645b0` / T98) — one playlist; filename-only sibling walk |
+| Loudness limiter on device | **Done** (2026-11-28) — attach failed with a hand-built `Config.Builder` config (`AudioEffect: bad parameter value`); **null cfg (engine default) attaches**: `builtin OK control=true enabled=true` + limiter read-back + live threshold updates. User confirmed audible gain/threshold changes and meter on Infinix X6878. |
+| Shared debug signing | **Done** (2026-11-28) — `androidApp/signing/debug.keystore` (committed **on purpose**; repo private; valid 2026–2056; same key the phone already trusts) + `signingConfigs` in `androidApp/build.gradle.kts`. Every workstation signs with one key → APKs install over each other, no uninstall, no data loss. **If the repo ever goes public: rotate the key first.** |
 
 ### Still open
 
-- **Loudness limiter — real device audio not yet proven (user, 2026-11-27):** Custom threshold/gain changes **still inaudible** on device after `setEnabled(true)` + re-apply-on-store-change (`ce6a969`). **Diagnostics landed (this tip):** non-silent attach (`SlotifyDyn` logcat + Settings status) and **alt LoudnessEnhancer** engine for A/B. **Next:** install APK from this tip, play a track, read status / `adb logcat -s SlotifyDyn:I`; if `alt OK` is audible but builtin is not, bug is DynamicsProcessing wiring; if neither attaches, session/output path. Unit tests do **not** cover device audio.
-- **Debug APK signing — two workstations, one device (user, 2026-11-28):** each machine’s default debug keystore differs → `INSTALL_FAILED_UPDATE_INCOMPATIBLE` when installing an APK built on machine B over one from machine A. **Need a shared signing setup** so both hosts can build installable-over-each-other debug (or release) APKs without `adb uninstall` (which **wipes app-private settings/playlists/loudness/cookies**). Store the keystore + passwords outside the repo or in a documented private path; wire `signingConfigs` in `androidApp/build.gradle.kts`; **never commit keystore/passwords**. Until then: uninstall loses data, or keep one build host for the phone.
 - **T96 tracklist search quality** (`word1 + word2` must-include; find user’s own playlists) — was on `bugs.txt`, not implemented.
 - **T2 content-fingerprint reconnect**: size + head/tail hash per match; scan re-binds by fingerprint first; play-failure self-heal beyond quarantine. (Designed, not built.)
 - Android: **token storage still in-memory** if any PKCE path is revived; launcher icon from `graphics/slotify.png`.
@@ -231,7 +231,7 @@ adb logcat -s SlotifyDyn:I
 - This host (last re-measure 2026-11-27): **KDE KWin Wayland** (was niri). JDK **`~/tools/jdk-21.0.13.1+2`** (`env.sh` → `JAVA_HOME`; confirm `$JAVA_HOME/bin/java` exists — older notes said `jdk-21.0.13+9`, which is **wrong here**). Android SDK `~/tools/android-sdk` with `platforms;android-37.0`. yt-dlp **2026.10.26**, ffmpeg **n9.1**. Branch **`0.1.4`** (in sync with `origin/0.1.4`). APK ~66MB (yt-dlp/ffmpeg natives) — **rebuild after pull**; last on-disk APK may predate tip.
 - Library: `/home/owner/Music` (~98 files post-whitelist on original host; 40 `.m4a` excluded by design). Android default root `/sdcard/Music` (single path — do not also add `/storage/emulated/0/Music` or files double-count before canonicalization).
 
-Do **not** commit: `spotify-app.txt`, `~/.local/share/slotify/*` / Android `filesDir` JSON, cookies, Client IDs in notes if avoidable (Client ID in Settings is public-ish for PKCE but still machine state). **Do not commit Android keystores or signing passwords** — see Open work “Debug APK signing”.
+Do **not** commit: `spotify-app.txt`, `~/.local/share/slotify/*` / Android `filesDir` JSON, cookies, Client IDs in notes if avoidable (Client ID in Settings is public-ish for PKCE but still machine state). The **shared debug keystore** (`androidApp/signing/debug.keystore`, passwords in `androidApp/build.gradle.kts`) **is committed on purpose** (user 2026-11-28, repo private) so all workstations sign identically — **rotate it before the repo ever goes public**. Do **not** commit a **release** keystore without asking.
 
 ---
 
