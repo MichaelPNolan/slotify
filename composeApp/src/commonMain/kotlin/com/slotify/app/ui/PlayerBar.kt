@@ -77,32 +77,32 @@ fun PlayerBar(state: AppState) {
             enabled = duration > 0,
             modifier = Modifier.fillMaxWidth(),
         )
+        Text(
+            text = now.title,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { state.engageCurrentFollow() }
+                .semantics { contentDescription = "Show current song in playlist or library" },
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = now.title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .clickable { state.engageCurrentFollow() }
-                        .semantics { contentDescription = "Show current song in playlist or library" },
-                )
-                Text(
-                    text = "${now.artist} · ${formatMs(position)} / ${formatMs(duration)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                IconButton(onClick = { state.cyclePlaybackMode() }) {
+            Text(
+                text = "${now.artist} · ${formatMs(position)} / ${formatMs(duration)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                IconButton(onClick = { state.cyclePlaybackMode() }, modifier = Modifier.size(40.dp)) {
                     if (playbackMode == PlaybackMode.LINEAR) {
                         // Two non-crossing lines: clearly "straight / not shuffled".
                         Box(modifier = Modifier.semantics { contentDescription = "Mode: linear" }) {
@@ -134,7 +134,7 @@ fun PlayerBar(state: AppState) {
                         }
                     }
                 }
-                IconButton(onClick = { state.previous() }) {
+                IconButton(onClick = { state.previous() }, modifier = Modifier.size(40.dp)) {
                     Icon(Icons.Default.SkipPrevious, contentDescription = "Previous")
                 }
                 FilledIconButton(onClick = { state.togglePlay() }) {
@@ -143,10 +143,10 @@ fun PlayerBar(state: AppState) {
                         contentDescription = if (snapshot.isPlaying) "Pause" else "Play",
                     )
                 }
-                IconButton(onClick = { state.next() }) {
+                IconButton(onClick = { state.next() }, modifier = Modifier.size(40.dp)) {
                     Icon(Icons.Default.SkipNext, contentDescription = "Next")
                 }
-                IconButton(onClick = { showQueue = true }) {
+                IconButton(onClick = { showQueue = true }, modifier = Modifier.size(40.dp)) {
                     Icon(Icons.Default.QueueMusic, contentDescription = "Up next")
                 }
             }
