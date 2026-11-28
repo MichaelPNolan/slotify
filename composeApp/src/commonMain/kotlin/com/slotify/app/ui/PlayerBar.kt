@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
@@ -54,6 +55,7 @@ fun PlayerBar(state: AppState) {
     val now = nowPlaying ?: return
 
     var seekValue by remember { mutableStateOf<Float?>(null) }
+    var showQueue by remember { mutableStateOf(false) }
     val duration = snapshot.durationMs.coerceAtLeast(0L)
     val position = (seekValue?.let { (it * duration).toLong() } ?: snapshot.positionMs)
         .coerceIn(0L, duration.takeIf { it > 0 } ?: Long.MAX_VALUE)
@@ -144,6 +146,9 @@ fun PlayerBar(state: AppState) {
                 IconButton(onClick = { state.next() }) {
                     Icon(Icons.Default.SkipNext, contentDescription = "Next")
                 }
+                IconButton(onClick = { showQueue = true }) {
+                    Icon(Icons.Default.QueueMusic, contentDescription = "Up next")
+                }
             }
         }
         snapshot.error?.let { err ->
@@ -155,6 +160,9 @@ fun PlayerBar(state: AppState) {
             )
         }
         Spacer(Modifier.height(2.dp))
+        if (showQueue) {
+            QueueSheet(state = state, onDismiss = { showQueue = false })
+        }
     }
 }
 

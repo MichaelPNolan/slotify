@@ -108,7 +108,7 @@ data class NowPlaying(
     val path: String,
 )
 
-private data class QueueEntry(
+data class QueueEntry(
     val path: String,
     val title: String,
     val artist: String,
@@ -346,6 +346,14 @@ class AppState(
 
     private var queue: List<QueueEntry> = emptyList()
     private var queueIndex: Int = -1
+
+    private val _queueView = MutableStateFlow(QueueView())
+    /** Snapshot for the Up Next sheet (queue order + playing index). */
+    val queueView: StateFlow<QueueView> = _queueView.asStateFlow()
+
+    private fun publishQueue() {
+        _queueView.value = QueueView(queue, queueIndex)
+    }
 
     private val _activePlaylistId = MutableStateFlow<String?>(null)
     /** Playlist currently owning the queue (for play/stop toggle + resume). */
@@ -2025,6 +2033,7 @@ class AppState(
             queue = queue.map { e ->
                 if (pathsReferToSameFile(e.path, case.oldPath)) e.copy(path = newResolved) else e
             }
+            publishQueue()
             _nowPlaying.value = _nowPlaying.value?.let { np ->
                 if (pathsReferToSameFile(np.path, case.oldPath)) np.copy(path = newResolved) else np
             }
@@ -2767,6 +2776,7 @@ class AppState(
         } else {
             fullQueue
         }
+        publishQueue()
         val startPos = savedProgress?.positionMs?.coerceAtLeast(0L) ?: 0L
         _activePlaylistId.value = playlistId
         queueIndex = if (mode.isArtistMode() && savedProgress == null) {
@@ -2878,6 +2888,7 @@ class AppState(
         queueIndex = currentKey?.let { k ->
             newQueue.indexOfFirst { it.trackKey == k }.takeIf { i -> i >= 0 }
         } ?: 0
+        publishQueue()
         persistPlaybackProgress()
     }
 
@@ -3049,6 +3060,7 @@ class AppState(
             else -> entries
         }
         queueIndex = queue.indexOfFirst { it.trackKey == startEntry.trackKey }.coerceAtLeast(0)
+        publishQueue()
         if (mode.isArtistMode()) {
             anchorArtistSessionToCurrent()
         }
@@ -3078,6 +3090,34 @@ class AppState(
     fun seekTo(positionMs: Long) {
         player.seekTo(positionMs)
         persistPlaybackProgress()
+    }
+
+    /** Jump to a queue slot from the Up Next sheet. */
+    fun playQueueItem(index: Int) {
+        if (index !in queue.indices) return
+        playAt(index)
+        persistPlaybackProgress()
+    }
+
+    /** Drop an upcoming queue entry — never the one currently playing. */
+    fun removeQueueItem(index: Int) {
+        if (index !in queue.indices || index == queueIndex) return
+        queue = queue.toMutableList().also { it.removeAt(index) }
+        if (index < queueIndex) queueIndex--
+        publishQueue()
+    }
+
+    /** Reorder the queue from the Up Next sheet; the playing item keeps its slot. */
+    fun moveQueueItem(from: Int, to: Int) {
+        if (from !in queue.indices || to !in queue.indices) return
+        if (from == queueIndex || to == queueIndex) return
+        val currentKey = queue.getOrNull(queueIndex)?.trackKey
+        val moved = moveEntry(queue, from, to)
+        if (moved === queue) return
+        queue = moved
+        queueIndex = currentKey?.let { k -> moved.indexOfFirst { it.trackKey == k } }
+            ?: queueIndex
+        publishQueue()
     }
 
     private fun advance(delta: Int, auto: Boolean) {
@@ -3136,6 +3176,7 @@ class AppState(
                 return
             }
             queue = queue + entry
+            publishQueue()
             playAt(queue.lastIndex)
             persistPlaybackProgress()
             return
@@ -3151,6 +3192,7 @@ class AppState(
             val newQueue = queue.map { it.trackKey }.shuffled().mapNotNull { byKey[it] }
             if (newQueue.isNotEmpty()) {
                 queue = newQueue
+                publishQueue()
                 persistPlaybackProgress()
                 var start = 0
                 while (start in queue.indices && queue[start].trackKey in skipped) start++
@@ -3190,6 +3232,7 @@ class AppState(
     private fun playAt(index: Int, seekToMs: Long = 0L) {
         val entry = queue.getOrNull(index) ?: return
         queueIndex = index
+        publishQueue()
         markPlayed(entry)
         _nowPlaying.value = NowPlaying(entry.title, entry.artist, entry.path)
         player.load(entry.path, startPaused = seekToMs > 0)
