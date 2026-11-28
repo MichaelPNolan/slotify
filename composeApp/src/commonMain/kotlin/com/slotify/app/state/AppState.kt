@@ -21,6 +21,7 @@ import com.slotify.app.library.writeAudioMetadata
 import com.slotify.app.loudness.CorrectionMode
 import com.slotify.app.loudness.analyseFileLoudness
 import com.slotify.app.loudness.appLoudnessStore
+import com.slotify.app.loudness.loudnessKey
 import com.slotify.app.loudness.recommendedBoostDb
 import com.slotify.app.loudness.supportsLoudnessBalance
 import com.slotify.app.match.Matcher
@@ -281,6 +282,15 @@ class AppState(
         scope.launch(Dispatchers.Default) {
             val r = analyseFileLoudness(path) ?: return@launch
             withContext(Dispatchers.IO) { loudnessStore.putTrack(path, r) }
+            // The playlist mean drives per-track boost — recompute every
+            // playlist holding this path so a fresh analysis cannot leave a
+            // fully-analysed list working against a stale mean.
+            val key = loudnessKey(path)
+            _playlists.value.forEach { p ->
+                if (p.resolvedTracks.any { loudnessKey(it.match?.local?.filePath ?: "") == key }) {
+                    recomputePlaylistProfile(p.id)
+                }
+            }
         }
     }
 
@@ -938,7 +948,6 @@ class AppState(
         if (local != null && _library.value.none { it.filePath == local.filePath }) {
             _library.value = _library.value + local
             withContext(Dispatchers.IO) { repository.saveLibrary(_library.value) }
-            if (supportsLoudnessBalance()) analyseLoudnessAsync(finalPath)
         }
 
         if (playlistId != null) {
@@ -961,6 +970,13 @@ class AppState(
                 }
             }
             matchPlaylist(playlistId)
+        }
+        // After pin + rematch so the playlist's resolved rows include this path
+        // when the analysis recomputes the playlist mean. Analyse whenever the
+        // loudness store has no entry — covers fresh downloads and older files
+        // fetched before loudness analysis existed.
+        if (supportsLoudnessBalance() && loudnessStore.track(finalPath) == null) {
+            analyseLoudnessAsync(finalPath)
         }
         return true
     }
