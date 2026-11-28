@@ -299,56 +299,42 @@ class AndroidAudioPlayer : AudioPlayer {
             dynLog("builtin SKIP: invalid session sid=$sid")
             return
         }
-        for (ch in intArrayOf(2, 1)) {
-            val attempt = runCatching {
-                val cfg = DynamicsProcessing.Config.Builder(
-                    DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION,
-                    ch,
-                    false, 0,
-                    false, 0,
-                    false, 0,
-                    pendingLimiter,
-                ).build()
-                // (priority, session, cfg) — variant lives in cfg.
-                val dpp = DynamicsProcessing(0, sid, cfg)
-                dpp.setInputGainAllChannelsTo(pendingBoostDb.coerceIn(-24f, 24f))
-                if (pendingLimiter) {
-                    dpp.setLimiterAllChannelsTo(buildLimiter())
-                }
-                val setEn = dpp.setEnabled(true)
-                if (setEn != AudioEffect.SUCCESS) {
-                    dpp.release()
-                    return@runCatching Result.failure(
-                        IllegalStateException("setEnabled=$setEn"),
-                    )
-                }
-                dynamics = dpp
-                dynamicsLimiterOn = pendingLimiter
-                val lim = if (pendingLimiter) {
-                    runCatching {
-                        val l = dpp.getLimiterByChannelIndex(0)
-                        "inUse=${l.isInUse} en=${l.isEnabled} thr=${l.threshold} " +
-                            "ratio=${l.ratio} post=${l.postGain}"
-                    }.getOrDefault("limiter-read-fail")
-                } else {
-                    "limiter=off"
-                }
-                Result.success(
-                    "builtin OK sid=$sid ch=$ch control=${dpp.hasControl()} " +
-                        "enabled=${dpp.getEnabled()} " +
-                        "gain0=${dpp.getInputGainByChannelIndex(0)} $lim",
-                )
-            }.getOrElse { e ->
-                Result.failure(e)
-            }
-            attempt.fold(
-                onSuccess = { dynLog(it); return },
-                onFailure = { e -> dynLog("builtin ch=$ch FAIL sid=$sid: ${e.message}") },
-            )
+        // Docs: null cfg → engine default configuration; binds to this session's
+        // MediaPlayer/AudioTrack. Do not hand-build a Config here — that is what
+        // the engine rejected with "bad parameter value".
+        val dpp = runCatching { DynamicsProcessing(0, sid, null) }.getOrElse { e ->
+            dynLog("builtin FAIL sid=$sid: ${e.message}")
+            return
         }
-        dynamics = null
-        dynamicsLimiterOn = false
-        dynLog("builtin GAVE UP sid=$sid (both channel counts failed)")
+        val setEn = dpp.setEnabled(true)
+        if (setEn != AudioEffect.SUCCESS) {
+            dpp.release()
+            dynLog("builtin FAIL sid=$sid: setEnabled=$setEn")
+            return
+        }
+        dynamics = dpp
+        dynamicsLimiterOn = pendingLimiter
+        runCatching {
+            dpp.setInputGainAllChannelsTo(pendingBoostDb.coerceIn(-24f, 24f))
+            if (pendingLimiter) {
+                dpp.setLimiterAllChannelsTo(buildLimiter())
+            }
+        }.onFailure { dynLog("builtin param apply failed (attached anyway): ${it.message}") }
+        val lim = if (pendingLimiter) {
+            runCatching {
+                val l = dpp.getLimiterByChannelIndex(0)
+                "inUse=${l.isInUse} en=${l.isEnabled} thr=${l.threshold} " +
+                    "ratio=${l.ratio} post=${l.postGain}"
+            }.getOrDefault("limiter-read-fail")
+        } else {
+            "limiter=off"
+        }
+        dynLog(
+            "builtin OK sid=$sid control=${runCatching { dpp.hasControl() }.getOrDefault(false)} " +
+                "enabled=${runCatching { dpp.getEnabled() }.getOrDefault(false)} " +
+                "gain0=${runCatching { dpp.getInputGainByChannelIndex(0) }.getOrDefault(Float.NaN)} " +
+                "$lim",
+        )
     }
 
     private fun applyLoudnessEnhancer() {
