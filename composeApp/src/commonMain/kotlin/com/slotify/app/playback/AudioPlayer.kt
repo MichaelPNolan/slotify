@@ -59,13 +59,6 @@ interface AudioPlayer {
     ) {}
 
     /**
-     * Which Android dynamics path to use when applying correction.
-     * `"builtin"` = `DynamicsProcessing`; `"alt"` = `LoudnessEnhancer`
-     * (separate effect library — diagnostic alternate). Desktop: no-op.
-     */
-    fun setDynamicsEngine(engine: String) {}
-
-    /**
      * Last dynamics attach/update line for Settings (non-silent diagnostics).
      * Never contains file paths or secrets.
      */

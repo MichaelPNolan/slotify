@@ -35,11 +35,6 @@ data class AppSettings(
     val loudnessDefaultThresholdDb: Float = 0f,
     /** Show 0–99 loudness chips on playlist rows once a track is analysed. */
     val showLoudnessChips: Boolean = true,
-    /**
-     * Android dynamics path: `"builtin"` = DynamicsProcessing,
-     * `"alt"` = LoudnessEnhancer (separate effect — diagnostic alternate).
-     */
-    val dynamicsEngine: String = "builtin",
 )
 
 /** Resume point for one playlist (survives app restart). */

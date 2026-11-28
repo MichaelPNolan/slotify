@@ -48,7 +48,7 @@ source env.sh           # JAVA_HOME must match THIS machine — confirm $JAVA_HO
 | **Desktop window sizing** | `0.1.3` | Event-driven only (AWT `ComponentListener` + Compose `windowState`); **no JNA poll** |
 | **Link file siblings** | `0.1.4` | After successful Link file, pin same-directory audio to **unmatched, non-held rows of that playlist only**; dual-axis title-words + artist gate |
 | **Loudness balance** | `0.1.5` | Pure-Kotlin EBU R128; app-private `loudness.json`; playlist mean; boost-only + DynamicsProcessing limiter (API 28+); volume-row remedy / Analyse when paused — see `reports/loudness-balance.md` |
-| **Dynamics diagnostics** | `0.1.5` | Non-silent attach: logcat **`SlotifyDyn`** + Settings status line; **alt engine** = `LoudnessEnhancer` (boost only) vs builtin `DynamicsProcessing` — Settings → Dynamics engine |
+| **Dynamics diagnostics** | `0.1.5` | Non-silent attach: logcat **`SlotifyDyn`** + Settings status line (session id, `hasControl`, `getEnabled`, read-back gain/limiter) |
 
 Design trail for those features: `specs/`, `reports/` in-repo (implementation plans deleted after delivery — loudness plan still in `plans/2026-11-27-loudness-balance.md`).
 
@@ -59,7 +59,7 @@ Design trail for those features: `specs/`, `reports/` in-repo (implementation pl
 - **Android play icon:** optimistic `isPlaying` on load/play (prepareAsync used to leave the button on “Play”).
 - **Spotify Settings:** connection / PKCE / browser-cookie **probe section removed**; URL paste + public search remain. Manual `sp_dc`/embed cookie path still used for private playlist **import** via Floorp reader on desktop.
 - **Link file sibling fill (0.1.4):** `Matcher.siblingMatchConfidence` + `assignSiblingLinks`. **Only** unmatched + non-held rows of the playlist you linked in. Title evidence (containment or ≥1 significant shared title word on tag **or** filename) **and** artist evidence when both known. One file → one track. Skips matched paths, existing pins, quarantine. Android `content://` → no directory walk (returns 0).
-- **Dynamics engines (0.1.5):** Settings → **Dynamics engine** — `builtin` = `DynamicsProcessing` (boost + limiter); `alt` = `LoudnessEnhancer` (separate effect, **boost only**, no limiter). Attach is **non-silent**: `adb logcat -s SlotifyDyn:I` and Settings status under Loudness balance. Status includes session id, `hasControl`, `getEnabled`, read-back gain/limiter. Desktop: status always “n/a (VLC)”.
+- **Dynamics engine (0.1.5):** Android built-in `DynamicsProcessing` only (boost + limiter) — the diagnostic `alt` `LoudnessEnhancer` path was removed after builtin attach was fixed and proven audible. Create with **null cfg** (engine default config); a hand-built `Config.Builder` config was rejected (`AudioEffect: bad parameter value`). Attach is **non-silent**: `adb logcat -s SlotifyDyn:I` and Settings status. Status includes session id, `hasControl`, `getEnabled`, read-back gain/limiter. Desktop: status always “n/a (VLC)”.
 
 ---
 

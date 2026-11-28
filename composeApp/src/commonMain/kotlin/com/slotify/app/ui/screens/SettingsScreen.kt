@@ -287,27 +287,10 @@ fun SettingsScreen(state: AppState) {
                     HorizontalDivider()
                     SectionTitle("Dynamics engine (Android)")
                     Text(
-                        text = "Off = built-in DynamicsProcessing (boost + limiter). " +
-                            "On = alt LoudnessEnhancer (separate effect, boost only) — " +
-                            "use to test whether session FX are audible at all.",
+                        text = "Built-in Android DynamicsProcessing (boost + limiter).",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "Dynamics engine",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Switch(
-                            checked = settings.dynamicsEngine == "alt",
-                            onCheckedChange = { alt ->
-                                state.updateSettings { s ->
-                                    s.copy(dynamicsEngine = if (alt) "alt" else "builtin")
-                                }
-                            },
-                        )
-                    }
                     val dynStatus by state.dynamicsStatus.collectAsState()
                     Text(
                         text = dynStatus,

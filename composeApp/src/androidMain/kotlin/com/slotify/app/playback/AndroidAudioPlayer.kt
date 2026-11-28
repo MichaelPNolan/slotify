@@ -3,7 +3,6 @@ package com.slotify.app.playback
 import android.media.MediaPlayer
 import android.media.audiofx.AudioEffect
 import android.media.audiofx.DynamicsProcessing
-import android.media.audiofx.LoudnessEnhancer
 import android.media.audiofx.Visualizer
 import android.util.Log
 import com.slotify.app.state.LIMITER_ATTACK_MS
@@ -32,10 +31,9 @@ actual fun createAudioPlayer(): AudioPlayer = AndroidAudioPlayer()
  * Android player over android.media.MediaPlayer — handles mp3/flac/ogg/m4a/wav
  * natively. Position is polled while playing (MediaPlayer has no time events).
  *
- * Dynamics: two engines, Settings → Dynamics engine.
- * - `"builtin"` — [DynamicsProcessing] (input gain + optional limiter)
- * - `"alt"` — [LoudnessEnhancer] (separate effect library, boost only)
- * Attach outcomes are non-silent: logcat tag `SlotifyDyn` + [dynamicsStatus].
+ * Dynamics: Android's built-in [DynamicsProcessing] (input gain + optional
+ * limiter) attached to the MediaPlayer session. Attach outcomes are non-silent:
+ * logcat tag `SlotifyDyn` + [dynamicsStatus].
  */
 class AndroidAudioPlayer : AudioPlayer {
 
@@ -47,10 +45,8 @@ class AndroidAudioPlayer : AudioPlayer {
     private var pendingBoostDb = 0f
     private var pendingLimiter = false
     private var pendingLimiterThresholdDb = 0f
-    private var dynamicsEngine: String = "builtin"
     private var dynamics: DynamicsProcessing? = null
     private var dynamicsLimiterOn = false
-    private var loudnessEnhancer: LoudnessEnhancer? = null
     private var visualizer: Visualizer? = null
 
     private val _snapshot = MutableStateFlow(PlayerSnapshot())
@@ -89,7 +85,7 @@ class AndroidAudioPlayer : AudioPlayer {
                 _snapshot.value = _snapshot.value.copy(isPlaying = false)
             }
             dynLog(
-                "onPrepared sid=${safeSid()} engine=$dynamicsEngine " +
+                "onPrepared sid=${safeSid()} " +
                     "boost=${fmtDb(pendingBoostDb)} limiter=$pendingLimiter " +
                     "thr=${fmtDb(pendingLimiterThresholdDb)}",
             )
@@ -135,7 +131,7 @@ class AndroidAudioPlayer : AudioPlayer {
                 currentPath = path,
                 isPlaying = pendingPlay,
             )
-            dynLog("load sid=${safeSid()} engine=$dynamicsEngine prepareAsync…")
+            dynLog("load sid=${safeSid()} prepareAsync…")
             player.prepareAsync()
         }.onFailure { e ->
             val message = e.message ?: "Cannot open file"
@@ -177,15 +173,6 @@ class AndroidAudioPlayer : AudioPlayer {
         runCatching { player.setVolume(v, v) }
     }
 
-    override fun setDynamicsEngine(engine: String) {
-        val next = if (engine == "alt") "alt" else "builtin"
-        if (next == dynamicsEngine) return
-        dynLog("engine switch $dynamicsEngine → $next")
-        dynamicsEngine = next
-        clearDynamics("engine-switch")
-        applyDynamics()
-    }
-
     override fun setLoudnessCorrection(
         boostDb: Float,
         enableLimiter: Boolean,
@@ -195,28 +182,25 @@ class AndroidAudioPlayer : AudioPlayer {
         pendingLimiter = enableLimiter
         pendingLimiterThresholdDb = limiterThresholdDb.coerceIn(-24f, 0f)
         dynLog(
-            "setCorrection engine=$dynamicsEngine boost=${fmtDb(pendingBoostDb)} " +
+            "setCorrection boost=${fmtDb(pendingBoostDb)} " +
                 "limiter=$pendingLimiter thr=${fmtDb(pendingLimiterThresholdDb)} " +
                 "sid=${safeSid()}",
         )
         applyDynamics()
-        if (pendingLimiter && _snapshot.value.isPlaying && dynamicsEngine == "builtin") {
+        if (pendingLimiter && _snapshot.value.isPlaying) {
             ensureMeter()
-        } else if (!pendingLimiter || dynamicsEngine == "alt") {
+        } else if (!pendingLimiter) {
             stopMeter()
         }
     }
 
     private fun clearDynamics(reason: String) {
         val hadDx = dynamics != null
-        val hadLe = loudnessEnhancer != null
         runCatching { dynamics?.release() }
-        runCatching { loudnessEnhancer?.release() }
         dynamics = null
-        loudnessEnhancer = null
         dynamicsLimiterOn = false
-        if (hadDx || hadLe) {
-            dynLog("clearDynamics ($reason) hadBuiltin=$hadDx hadAlt=$hadLe")
+        if (hadDx) {
+            dynLog("clearDynamics ($reason)")
         }
     }
 
@@ -246,8 +230,8 @@ class AndroidAudioPlayer : AudioPlayer {
     }
 
     private fun applyDynamics() {
-        if (android.os.Build.VERSION.SDK_INT < 28 && dynamicsEngine == "builtin") {
-            dynLog("skip builtin: SDK ${android.os.Build.VERSION.SDK_INT} < 28")
+        if (android.os.Build.VERSION.SDK_INT < 28) {
+            dynLog("skip DynamicsProcessing: SDK ${android.os.Build.VERSION.SDK_INT} < 28")
             return
         }
         if (!needsDynamics()) {
@@ -255,10 +239,7 @@ class AndroidAudioPlayer : AudioPlayer {
             dynLog("neutral (no boost/limit) — effect cleared")
             return
         }
-        when (dynamicsEngine) {
-            "alt" -> applyLoudnessEnhancer()
-            else -> applyBuiltinDynamics()
-        }
+        applyBuiltinDynamics()
     }
 
     private fun applyBuiltinDynamics() {
@@ -337,70 +318,10 @@ class AndroidAudioPlayer : AudioPlayer {
         )
     }
 
-    private fun applyLoudnessEnhancer() {
-        if (pendingLimiter) {
-            dynLog("alt: limiter requested but LoudnessEnhancer has no limiter stage")
-        }
-        val existing = loudnessEnhancer
-        if (existing != null) {
-            val ok = runCatching {
-                // Target gain is millibels: 100 mB = 1 dB.
-                val mb = (pendingBoostDb.coerceIn(-24f, 24f) * 100f).toInt()
-                existing.setTargetGain(mb)
-                if (existing.setEnabled(true) != AudioEffect.SUCCESS) {
-                    return@runCatching false
-                }
-                true
-            }.getOrElse { e ->
-                dynLog("alt update error: ${e.message}")
-                false
-            }
-            if (ok) {
-                dynLog(
-                    "alt update ok targetMB=${(pendingBoostDb * 100f).toInt()} " +
-                        "control=${runCatching { existing.hasControl() }.getOrDefault(false)} " +
-                        "enabled=${runCatching { existing.getEnabled() }.getOrDefault(false)} " +
-                        "gain=${runCatching { existing.getTargetGain() }.getOrDefault(Int.MIN_VALUE)}",
-                )
-                return
-            }
-            clearDynamics("alt-recreate")
-        }
-        createLoudnessEnhancer()
-    }
-
-    private fun createLoudnessEnhancer() {
-        val sid = safeSid()
-        if (sid <= 0) {
-            dynLog("alt SKIP: invalid session sid=$sid")
-            return
-        }
-        val attempt = runCatching {
-            val le = LoudnessEnhancer(sid)
-            val mb = (pendingBoostDb.coerceIn(-24f, 24f) * 100f).toInt()
-            le.setTargetGain(mb)
-            val setEn = le.setEnabled(true)
-            if (setEn != AudioEffect.SUCCESS) {
-                le.release()
-                return@runCatching Result.failure(IllegalStateException("setEnabled=$setEn"))
-            }
-            loudnessEnhancer = le
-            Result.success(
-                "alt OK sid=$sid control=${le.hasControl()} enabled=${le.getEnabled()} " +
-                    "targetMB=${le.getTargetGain()} (requested $mb)",
-            )
-        }.getOrElse { e -> Result.failure(e) }
-        attempt.fold(
-            onSuccess = { dynLog(it) },
-            onFailure = { e -> dynLog("alt FAIL sid=$sid: ${e.message}") },
-        )
-    }
-
     // ── Reduction meter (Visualizer peak vs limiter threshold) ────────
 
     private fun ensureMeter() {
         if (!pendingLimiter) return
-        if (dynamicsEngine != "builtin") return
         if (meterJob?.isActive == true) return
         val sid = safeSid()
         if (sid <= 0) return
