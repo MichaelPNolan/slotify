@@ -30,7 +30,7 @@ source env.sh           # JAVA_HOME must match THIS machine — confirm $JAVA_HO
 - **`0.1.2`** — tip before 0.1.3: artist shuffle, cover art, Bing search, batch score, quarantine, etc. (~48 commits from `5d08e0b`).
 - **`0.1.3`** — YouTube cookies.txt; event-driven desktop window sizing (JNA geometry poll removed on KWin).
 - **`0.1.4`** — Link file same-folder sibling fill; Thai filename match; link status (`fb645b0`).
-- **`0.2.0`** — this line: cut from the 0.1.5 tip after the dynamics work landed (attach fixed + proven audible, shared debug signing, download auto-analysis, custom-chip glow, collapsible search, Settings round-trip nav).
+- **`0.2.0`** — this line: cut from the 0.1.5 tip after the dynamics work landed (attach fixed + proven audible, shared debug signing, download auto-analysis, custom-chip glow, collapsible search, Settings round-trip nav). Post-cut: library row tap = play/pause (per-row play icon removed), Android **MediaSession lock-screen controls + BT-disconnect pause** (player untouched), **Up Next queue sheet** (tap-to-jump, reorder arrows, remove), player-bar layout (title own line, tight control cluster). Soulseek evaluated → rejected; Butler (DGuckert/Butler) studied for queue/UX tricks.
 - **`0.1.5`** — **loudness balance** (EBU R128 + DynamicsProcessing), volume-row remedy/Analyse slot, playlist title-follow, batch-stop + reset-dialog fixes; ended with dynamics attach fix + portable signing.
 
 ### What landed since the old `0.0.3` handoff (`5d08e0b` → tip, ~50 commits)
@@ -50,6 +50,8 @@ source env.sh           # JAVA_HOME must match THIS machine — confirm $JAVA_HO
 | **Link file siblings** | `0.1.4` | After successful Link file, pin same-directory audio to **unmatched, non-held rows of that playlist only**; dual-axis title-words + artist gate |
 | **Loudness balance** | `0.1.5` | Pure-Kotlin EBU R128; app-private `loudness.json`; playlist mean; boost-only + DynamicsProcessing limiter (API 28+); volume-row remedy / Analyse when paused — see `reports/loudness-balance.md` |
 | **Dynamics diagnostics** | `0.1.5` | Non-silent attach: logcat **`SlotifyDyn`** + Settings status line (session id, `hasControl`, `getEnabled`, read-back gain/limiter) |
+| **Lock-screen media controls** | `0.2.0` | Framework `MediaSession` + `MediaStyle` notification around the existing MediaPlayer (`SystemMediaControls` expect/actual — desktop no-op). Play/pause/next/prev/seek route through AppState (`togglePlay`/`advance`/`seekTo`). `POST_NOTIFICATIONS` requested on API 33+. BT/A2DP/BLE output removal while playing → pause (AudioDeviceCallback). |
+| **Up Next queue sheet** | `0.2.0` | Player-bar queue icon → modal sheet: tap row to jump, up/down reorder, ✕ remove; playing row pinned. `queueView` StateFlow published from queue mutations; `moveEntry` helper tested. |
 
 Design trail for those features: `specs/`, `reports/` in-repo (implementation plans deleted after delivery — loudness plan still in `plans/2026-11-27-loudness-balance.md`).
 
