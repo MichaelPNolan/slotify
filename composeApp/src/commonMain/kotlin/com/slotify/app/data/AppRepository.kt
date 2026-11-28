@@ -31,6 +31,8 @@ data class AppSettings(
     val loudnessBalance: Boolean = false,
     /** Cap for Recommended boost, dB. */
     val loudnessMaxBoostDb: Float = 12f,
+    /** Default limiter threshold, dBFS (−24..0). Per-track Custom overrides it. */
+    val loudnessDefaultThresholdDb: Float = 0f,
     /** Show 0–99 loudness chips on playlist rows once a track is analysed. */
     val showLoudnessChips: Boolean = true,
 )

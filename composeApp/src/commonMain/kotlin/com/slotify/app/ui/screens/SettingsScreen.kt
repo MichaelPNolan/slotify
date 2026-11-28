@@ -256,6 +256,20 @@ fun SettingsScreen(state: AppState) {
                         valueRange = 0f..24f,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    Text(
+                        text = "Default limit threshold (per-track Custom overrides it)",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    com.slotify.app.ui.LoudnessThresholdSlider(
+                        thresholdDb = settings.loudnessDefaultThresholdDb,
+                        onThresholdChange = { v ->
+                            state.updateSettings { s ->
+                                s.copy(loudnessDefaultThresholdDb = v.coerceIn(-24f, 0f))
+                            }
+                            state.refreshLoudnessForCurrentTrack()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = "Show loudness chips",

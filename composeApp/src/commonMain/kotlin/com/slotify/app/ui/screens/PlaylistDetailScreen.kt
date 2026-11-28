@@ -944,22 +944,12 @@ private fun LoudnessDetailDialog(
                         },
                         valueRange = -12f..24f,
                     )
-                    Text(
-                        text = if (thr <= -0.05f) {
-                            "Limit starts at ${"%.1f".format(thr)} dBFS " +
-                                "(${fmtAbs(thr.toDouble())} dB below max)"
-                        } else {
-                            "Limit starts at max volume (0 dBFS)"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Slider(
-                        value = thr,
-                        onValueChange = { v ->
+                    com.slotify.app.ui.LoudnessThresholdSlider(
+                        thresholdDb = thr,
+                        onThresholdChange = { v ->
                             thr = v
                             onMode(CorrectionMode.CUSTOM, gain.toDouble(), v.toDouble())
                         },
-                        valueRange = -24f..0f,
                     )
                 }
             }

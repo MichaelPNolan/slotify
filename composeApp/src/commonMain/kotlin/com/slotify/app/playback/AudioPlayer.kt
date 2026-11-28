@@ -59,8 +59,9 @@ interface AudioPlayer {
     ) {}
 
     /**
-     * Live reduction meter 0f..1f for the volume-row bar (Android Visualizer
-     * peak vs limiter threshold). Desktop stays 0f.
+     * Live gain reduction 0f..1f for the volume-row bar — how far the monitored
+     * peak sits past the limiter threshold, converted to attenuation at the
+     * limiter ratio (REDUCTION_METER_FULL_DB = full bar). Desktop stays 0f.
      */
     val reductionMeter: StateFlow<Float>
 

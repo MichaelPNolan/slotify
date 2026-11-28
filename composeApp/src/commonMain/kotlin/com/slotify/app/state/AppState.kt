@@ -3217,7 +3217,7 @@ class AppState(
         }
         val threshold = when (track.correction) {
             CorrectionMode.CUSTOM -> track.customLimitThresholdDb.toFloat()
-            else -> 0f
+            else -> s.loudnessDefaultThresholdDb.coerceIn(-24f, 0f)
         }
         player.setLoudnessCorrection(
             boost,

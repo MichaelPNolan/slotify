@@ -127,7 +127,7 @@ fun VolumeControl(state: AppState) {
                 loudness.limiting -> MaterialTheme.colorScheme.secondary
                 else -> MaterialTheme.colorScheme.onSurfaceVariant
             }
-            // Bar height tracks live reduction (0..1); text sits on top.
+            // Bar width tracks live gain reduction (0..1), filling left→right; text on top.
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -140,9 +140,9 @@ fun VolumeControl(state: AppState) {
                 if (reduction > 0.01f && loudness.limiting) {
                     Box(
                         modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .fillMaxHeight(fraction = reduction.coerceIn(0.08f, 1f))
+                            .align(Alignment.CenterStart)
+                            .fillMaxHeight()
+                            .fillMaxWidth(fraction = reduction.coerceIn(0.08f, 1f))
                             .background(
                                 MaterialTheme.colorScheme.secondary.copy(
                                     alpha = 0.40f + 0.45f * reduction,

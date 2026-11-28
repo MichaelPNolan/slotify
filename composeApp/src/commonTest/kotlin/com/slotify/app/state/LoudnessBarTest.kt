@@ -47,4 +47,18 @@ class LoudnessBarTest {
             LoudnessBar(boostDb = -6f, limiting = true).label,
         )
     }
+
+    @Test
+    fun gainReductionZeroAtOrBelowThreshold() {
+        assertEquals(0f, gainReductionDb(peakDb = -6f, thresholdDb = 0f, ratio = 1.5f))
+        assertEquals(0f, gainReductionDb(peakDb = 0f, thresholdDb = 0f, ratio = 1.5f))
+    }
+
+    @Test
+    fun gainReductionIsOverageAtRatio() {
+        // 3 dB over at 1.5:1 → output 2 dB over → 1 dB attenuation.
+        assertEquals(1f, gainReductionDb(peakDb = 0f, thresholdDb = -3f, ratio = 1.5f), 1e-4f)
+        // 6 dB over at 2:1 → 3 dB attenuation.
+        assertEquals(3f, gainReductionDb(peakDb = 0f, thresholdDb = -6f, ratio = 2f), 1e-4f)
+    }
 }

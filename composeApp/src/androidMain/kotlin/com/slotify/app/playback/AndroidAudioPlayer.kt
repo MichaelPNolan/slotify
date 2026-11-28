@@ -4,6 +4,12 @@ import android.media.MediaPlayer
 import android.media.audiofx.AudioEffect
 import android.media.audiofx.DynamicsProcessing
 import android.media.audiofx.Visualizer
+import com.slotify.app.state.LIMITER_ATTACK_MS
+import com.slotify.app.state.LIMITER_POST_GAIN_DB
+import com.slotify.app.state.LIMITER_RATIO
+import com.slotify.app.state.LIMITER_RELEASE_MS
+import com.slotify.app.state.REDUCTION_METER_FULL_DB
+import com.slotify.app.state.gainReductionDb
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -172,16 +178,17 @@ class AndroidAudioPlayer : AudioPlayer {
     private fun needsDynamics(): Boolean =
         pendingLimiter || pendingBoostDb > 0.01f || pendingBoostDb < -0.01f
 
+    // Limiter(inUse, enabled, linkGroup, attackMs, releaseMs, ratio, thresholdDb, postGainDb)
     private fun buildLimiter(): DynamicsProcessing.Limiter =
         DynamicsProcessing.Limiter(
             true,
             true,
             0,
+            LIMITER_ATTACK_MS,
+            LIMITER_RELEASE_MS,
+            LIMITER_RATIO,
             pendingLimiterThresholdDb,
-            5f,
-            50f,
-            1.5f,
-            -3f,
+            LIMITER_POST_GAIN_DB,
         )
 
     private fun applyDynamics() {
@@ -220,11 +227,8 @@ class AndroidAudioPlayer : AudioPlayer {
                     false, 0,
                     pendingLimiter,
                 ).build()
-                val dpp = DynamicsProcessing(
-                    DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION,
-                    sid,
-                    cfg,
-                )
+                // (priority, session, cfg) — variant lives in cfg.
+                val dpp = DynamicsProcessing(0, sid, cfg)
                 dpp.setInputGainAllChannelsTo(pendingBoostDb.coerceIn(-24f, 24f))
                 if (pendingLimiter) {
                     dpp.setLimiterAllChannelsTo(buildLimiter())
@@ -267,14 +271,15 @@ class AndroidAudioPlayer : AudioPlayer {
                 delay(50)
                 val code = runCatching { v.getMeasurementPeakRms(m) }.getOrDefault(-1)
                 if (code != Visualizer.SUCCESS) continue
-                val peakDb = m.mPeak / 1000f
+                // mPeak is millibels (100 mB = 1 dB) below full scale.
+                val peakDb = m.mPeak / 100f
                 if (!pendingLimiter) {
                     _reductionMeter.value = 0f
                     continue
                 }
-                val over = peakDb - pendingLimiterThresholdDb
                 _reductionMeter.value =
-                    if (over <= 0f) 0f else (over / 12f).coerceIn(0f, 1f)
+                    (gainReductionDb(peakDb, pendingLimiterThresholdDb, LIMITER_RATIO) /
+                        REDUCTION_METER_FULL_DB).coerceIn(0f, 1f)
             }
         }
     }
