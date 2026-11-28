@@ -3,19 +3,19 @@
 Read this (plus `README.md` setup) before continuing on a new machine.
 Source of truth for long-lived notes: project memory `MEMORY.md` under MiMoCode’s data dir; this file is the **in-repo** distilled copy so a fresh clone is enough.
 
-**Branch / release line:** **`0.1.5`** (checked out here). Remote: `https://github.com/MichaelPNolan/slotify.git` (`origin/0.1.5`). Older lines: `0.1.4`, `0.1.3`, `0.1.2`, `0.0.3`, `main`. Do not re-init git or force-push unless the user asks.
+**Branch / release line:** **`0.2.0`** (checked out here). Remote: `https://github.com/MichaelPNolan/slotify.git` (`origin/0.2.0`). Older lines: `0.1.5`, `0.1.4`, `0.1.3`, `0.1.2`, `0.0.3`, `main`. Do not re-init git or force-push unless the user asks.
 
-**`VERSION` file:** `0.1.5` — keep it in step with the branch when cutting a new line.
+**`VERSION` file:** `0.2.0` — keep it in step with the branch when cutting a new line.
 
 ---
 
-## Catch-up on this station (branch `0.1.5`)
+## Catch-up on this station (branch `0.2.0`)
 
 This host **already has the repo**. No re-clone:
 
 ```bash
 cd <slotify>
-git status -sb          # expect: ## 0.1.5...origin/0.1.5  (in sync; dirty .mimocode/* is normal)
+git status -sb          # expect: ## 0.2.0...origin/0.2.0  (in sync; dirty .mimocode/* is normal)
 git pull --ff-only      # only if behind
 git log --oneline -8
 source env.sh           # JAVA_HOME must match THIS machine — confirm $JAVA_HOME/bin/java exists
@@ -30,7 +30,8 @@ source env.sh           # JAVA_HOME must match THIS machine — confirm $JAVA_HO
 - **`0.1.2`** — tip before 0.1.3: artist shuffle, cover art, Bing search, batch score, quarantine, etc. (~48 commits from `5d08e0b`).
 - **`0.1.3`** — YouTube cookies.txt; event-driven desktop window sizing (JNA geometry poll removed on KWin).
 - **`0.1.4`** — Link file same-folder sibling fill; Thai filename match; link status (`fb645b0`).
-- **`0.1.5`** — this line: **loudness balance** (EBU R128 + DynamicsProcessing), volume-row remedy/Analyse slot, playlist title-follow, batch-stop + reset-dialog fixes.
+- **`0.2.0`** — this line: cut from the 0.1.5 tip after the dynamics work landed (attach fixed + proven audible, shared debug signing, download auto-analysis, custom-chip glow, collapsible search, Settings round-trip nav).
+- **`0.1.5`** — **loudness balance** (EBU R128 + DynamicsProcessing), volume-row remedy/Analyse slot, playlist title-follow, batch-stop + reset-dialog fixes; ended with dynamics attach fix + portable signing.
 
 ### What landed since the old `0.0.3` handoff (`5d08e0b` → tip, ~50 commits)
 
