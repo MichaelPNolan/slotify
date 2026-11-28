@@ -1,6 +1,7 @@
 package com.slotify.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.shadow
 import com.slotify.app.loudness.CorrectionMode
 import com.slotify.app.loudness.TrackLoudness
 import com.slotify.app.loudness.recommendedBoostDb
@@ -628,6 +630,10 @@ private fun MatchedRow(
     val loudness = remember(loudnessRevision, showChips, localPath) {
         if (showChips) state.loudnessStore.track(localPath) else null
     }
+    // Custom correction gets a glow even when chip numbers are hidden.
+    val customDynamics = remember(loudnessRevision, localPath) {
+        state.loudnessStore.track(localPath)?.correction == CorrectionMode.CUSTOM
+    }
     var showLoudnessSheet by remember { mutableStateOf(false) }
     if (showLoudnessSheet && loudness != null) {
         LoudnessDetailDialog(
@@ -736,10 +742,29 @@ private fun MatchedRow(
 
     val dimmed = row.mark == RowMark.DELETE || row.mark == RowMark.SKIP
 
+    val glowShape = MaterialTheme.shapes.medium
+    val glowColor = MaterialTheme.colorScheme.tertiary
+    val rowMarker = if (customDynamics) {
+        Modifier
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .shadow(
+                elevation = 12.dp,
+                shape = glowShape,
+                ambientColor = glowColor,
+                spotColor = glowColor,
+            )
+            .background(glowColor.copy(alpha = 0.12f), glowShape)
+            .border(1.5.dp, glowColor.copy(alpha = 0.85f), glowShape)
+            .padding(horizontal = 6.dp)
+    } else {
+        Modifier
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .then(gestureModifier)
+            .then(rowMarker)
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
