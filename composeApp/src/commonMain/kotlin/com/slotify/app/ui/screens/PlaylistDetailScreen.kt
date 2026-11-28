@@ -1,5 +1,8 @@
 package com.slotify.app.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -47,7 +50,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,7 +59,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusEvent
 import com.slotify.app.loudness.CorrectionMode
+import kotlinx.coroutines.delay
 import com.slotify.app.loudness.TrackLoudness
 import com.slotify.app.loudness.recommendedBoostDb
 import com.slotify.app.loudness.supportsLoudnessBalance
@@ -85,7 +91,12 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
     val loudnessStatus by state.loudnessStatus.collectAsState()
     var findTarget by remember { mutableStateOf<RemoteTrack?>(null) }
     var linkTarget by remember { mutableStateOf<RemoteTrack?>(null) }
-    var filter by rememberSaveable(playlistId) { mutableStateOf("") }
+    var filter by remember(playlistId) { mutableStateOf("") }
+    var searchOpen by remember(playlistId) { mutableStateOf(false) }
+    // Bumped by any field interaction (focus/typing) to reset the idle timer.
+    var searchTouch by remember(playlistId) { mutableStateOf(0) }
+    val searchFocus = remember(playlistId) { FocusRequester() }
+    val nowPlaying by state.nowPlaying.collectAsState()
     val scope = rememberCoroutineScope()
 
     findTarget?.let { target ->
@@ -158,26 +169,72 @@ fun PlaylistDetailScreen(state: AppState, playlistId: String) {
             // Playlist delete lives on the list view (mark → Delete marked),
             // not as a one-click trash icon here. Play/rematch live in the
             // bottom bar + per-row controls — no header duplicates.
+            IconButton(onClick = {
+                if (searchOpen) {
+                    searchOpen = false
+                    filter = ""
+                } else {
+                    searchOpen = true
+                    searchTouch++
+                }
+            }) {
+                Icon(Icons.Default.Search, contentDescription = "Search in playlist")
+            }
         }
 
-        // Narrow the list by title / artist / album / file name.
-        OutlinedTextField(
-            value = filter,
-            onValueChange = { filter = it },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            label = { Text("Search in playlist") },
-            placeholder = { Text("Title, artist, album…") },
-            singleLine = true,
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            supportingText = {
-                if (filter.isNotBlank()) {
-                    val n = playlist.resolvedTracks.count { matchesFilter(it) }
-                    Text("Showing $n of ${playlist.resolvedTracks.size}")
-                }
-            },
-        )
+        // Narrow the list by title / artist, album or file name. Opens from the
+        // header magnifier; minimizes back to the icon when left alone or when
+        // a new track starts playing.
+        AnimatedVisibility(
+            visible = searchOpen,
+            enter = expandVertically(),
+            exit = shrinkVertically(),
+        ) {
+            OutlinedTextField(
+                value = filter,
+                onValueChange = {
+                    filter = it
+                    searchTouch++
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .focusRequester(searchFocus)
+                    .onFocusEvent { if (it.hasFocus) searchTouch++ },
+                label = { Text("Search in playlist") },
+                placeholder = { Text("Title, artist, album…") },
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                supportingText = {
+                    if (filter.isNotBlank()) {
+                        val n = playlist.resolvedTracks.count { matchesFilter(it) }
+                        Text("Showing $n of ${playlist.resolvedTracks.size}")
+                    }
+                },
+            )
+        }
+
+        LaunchedEffect(searchOpen) {
+            if (searchOpen) {
+                runCatching { searchFocus.requestFocus() }
+            }
+        }
+
+        // Idle: collapse back to the icon when the field is not touched.
+        LaunchedEffect(searchOpen, searchTouch) {
+            if (!searchOpen) return@LaunchedEffect
+            delay(8_000)
+            searchOpen = false
+            filter = ""
+        }
+
+        // Starting a new track closes the search immediately.
+        LaunchedEffect(nowPlaying?.path) {
+            if (nowPlaying?.path != null && searchOpen) {
+                searchOpen = false
+                filter = ""
+            }
+        }
 
         // Marked-for-delete bulk action.
         if (playlist.deleteMarkedCount > 0) {
